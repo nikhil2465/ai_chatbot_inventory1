@@ -27,9 +27,46 @@ const NAV_ITEMS = [
 
   { section: 'AI Tools' },
   { id: 'chatbot', label: 'AI Assistant', icon: <svg viewBox="0 0 16 16" fill="none"><rect x="1" y="2" width="14" height="9.5" rx="2" stroke="white" strokeWidth="1.5" opacity=".9"/><path d="M4.5 13.5l1.5-2H10" stroke="white" strokeWidth="1.5" strokeLinecap="round" opacity=".7"/><circle cx="5" cy="6.75" r="1" fill="white" opacity=".8"/><circle cx="8" cy="6.75" r="1" fill="white" opacity=".8"/><circle cx="11" cy="6.75" r="1" fill="white" opacity=".8"/></svg> },
+
+  { section: 'Project Info' },
+  { id: 'devguide', label: 'Developer Guide', badge: 'DEV', badgeClass: 'nb-b', icon: <svg viewBox="0 0 16 16" fill="none"><path d="M4 5l-3 3 3 3M12 5l3 3-3 3M9 2l-2 12" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity=".9"/></svg> },
+  { id: 'about',    label: 'About InvenIQ',   icon: <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="white" strokeWidth="1.4" opacity=".85"/><path d="M8 7v5M8 5v.5" stroke="white" strokeWidth="1.8" strokeLinecap="round" opacity=".9"/></svg> },
 ];
 
-export default function Sidebar({ activeView, onNavigate }) {
+function SidebarFooter({ dbStatus }) {
+  if (!dbStatus || dbStatus.status === 'checking') {
+    return (
+      <div className="live-r">
+        <span className="dot" style={{ background: 'rgba(255,255,255,.3)' }} />
+        Checking connection…
+      </div>
+    );
+  }
+
+  if (dbStatus.source === 'mysql') {
+    const elapsed = dbStatus.checkedAt
+      ? (() => {
+          const s = Math.floor((Date.now() - new Date(dbStatus.checkedAt).getTime()) / 1000);
+          return s < 60 ? `${s}s ago` : `${Math.floor(s / 60)}m ago`;
+        })()
+      : null;
+    return (
+      <div className="live-r">
+        <span className="dot dg" />
+        Live MySQL · {elapsed || 'just now'}
+      </div>
+    );
+  }
+
+  return (
+    <div className="live-r">
+      <span className="dot da" />
+      Demo Mode · No DB
+    </div>
+  );
+}
+
+export default function Sidebar({ activeView, onNavigate, dbStatus }) {
   return (
     <nav className="sidebar">
       <div className="logo-area">
@@ -67,10 +104,7 @@ export default function Sidebar({ activeView, onNavigate }) {
       </div>
 
       <div className="sf">
-        <div className="live-r">
-          <span className="dot dg"></span>
-          Connected to your DMS · 4 min ago
-        </div>
+        <SidebarFooter dbStatus={dbStatus} />
       </div>
     </nav>
   );

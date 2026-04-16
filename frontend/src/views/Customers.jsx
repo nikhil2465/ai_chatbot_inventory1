@@ -1,38 +1,62 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import DataSourceBadge from '../components/DataSourceBadge';
 
-const CUSTS = [
-  { n: 'Mehta Constructions', t: 'Contractor', r: '₹3.8L', sc: 92, mg: '19.2%', lo: '2 days ago', dso: 18, out: '₹0', st: 'top' },
-  { n: 'City Interiors', t: 'Interior Firm', r: '₹2.4L', sc: 88, mg: '28.4%', lo: '47 days ago', dso: 24, out: '₹0', st: 'risk' },
-  { n: 'Kumar & Sons', t: 'Retailer', r: '₹2.1L', sc: 85, mg: '21.8%', lo: '3 days ago', dso: 22, out: '₹0.4L', st: 'top' },
-  { n: 'Sharma Constructions', t: 'Contractor', r: '₹1.8L', sc: 42, mg: '14.2%', lo: '10 days ago', dso: 78, out: '₹3.4L', st: 'overdue' },
-  { n: 'Design Studio Patel', t: 'Interior Firm', r: '₹1.6L', sc: 91, mg: '31.2%', lo: '1 day ago', dso: 14, out: '₹0', st: 'top' },
-  { n: 'Raj Carpentry Works', t: 'Carpenter', r: '₹0.9L', sc: 76, mg: '22.1%', lo: '8 days ago', dso: 12, out: '₹0', st: 'ok' },
-  { n: 'Gupta Materials Retail', t: 'Retailer', r: '₹0.8L', sc: 48, mg: '18.4%', lo: '38 days ago', dso: 44, out: '₹2.1L', st: 'risk' },
-  { n: 'Royal Interiors', t: 'Interior Firm', r: '₹0.6L', sc: 62, mg: '26.8%', lo: '5 days ago', dso: 20, out: '₹0', st: 'ok' },
+const STATIC_CUSTS = [
+  { name: 'Mehta Constructions',  segment: 'Contractor',    monthly_value: '₹3.8L', score: 92, outstanding: '₹0',    days_since_order: 2,  risk: 'LOW' },
+  { name: 'City Interiors',       segment: 'Interior Firm', monthly_value: '₹2.4L', score: 88, outstanding: '₹0',    days_since_order: 47, risk: 'MEDIUM' },
+  { name: 'Kumar & Sons',         segment: 'Retailer',      monthly_value: '₹2.1L', score: 85, outstanding: '₹0.4L', days_since_order: 3,  risk: 'LOW' },
+  { name: 'Sharma Constructions', segment: 'Contractor',    monthly_value: '₹1.8L', score: 42, outstanding: '₹3.4L', days_since_order: 78, risk: 'HIGH' },
+  { name: 'Design Studio Patel',  segment: 'Interior Firm', monthly_value: '₹1.6L', score: 91, outstanding: '₹0',    days_since_order: 1,  risk: 'LOW' },
+  { name: 'Raj Carpentry Works',  segment: 'Carpenter',     monthly_value: '₹0.9L', score: 76, outstanding: '₹0',    days_since_order: 8,  risk: 'LOW' },
+  { name: 'Gupta Materials',      segment: 'Retailer',      monthly_value: '₹0.8L', score: 48, outstanding: '₹2.1L', days_since_order: 38, risk: 'MEDIUM' },
+  { name: 'Royal Interiors',      segment: 'Interior Firm', monthly_value: '₹0.6L', score: 62, outstanding: '₹0',    days_since_order: 5,  risk: 'LOW' },
 ];
 
-export default function Customers() {
+function riskStatus(c) {
+  if (c.risk === 'HIGH' || parseFloat(c.outstanding) > 2) return 'overdue';
+  if (c.risk === 'MEDIUM' || c.days_since_order > 30) return 'risk';
+  if (c.score >= 85) return 'top';
+  return 'ok';
+}
+
+export default function Customers({ onGoChat }) {
   const [filter, setFilter] = useState('all');
-  const list = filter === 'all' ? CUSTS
-    : filter === 'top' ? CUSTS.filter(c => c.st === 'top')
-    : filter === 'risk' ? CUSTS.filter(c => c.st === 'risk')
-    : CUSTS.filter(c => c.st === 'overdue');
+  const [d, setD]           = useState(null);
+
+  useEffect(() => {
+    fetch('/api/customers').then(r => r.json()).then(setD).catch(() => {});
+  }, []);
+
+  const allCustomers = (d?.customers?.length ? d.customers : STATIC_CUSTS).map(c => ({
+    ...c, _st: riskStatus(c),
+  }));
+
+  const list = filter === 'all'     ? allCustomers
+             : filter === 'top'     ? allCustomers.filter(c => c._st === 'top')
+             : filter === 'risk'    ? allCustomers.filter(c => c._st === 'risk')
+             : allCustomers.filter(c => c._st === 'overdue');
+
+  const src = d?.data_source ?? 'demo';
 
   return (
     <div className="view">
       <div className="ph">
         <div className="pg">Customer Intelligence — Know Every Account</div>
-        <div className="psub">Payment behaviour · At-risk accounts · Margin by customer · Discount leakage</div>
+        <div className="psub">
+          Payment behaviour · At-risk accounts · Margin by customer · Discount leakage
+          {' '}<DataSourceBadge source={src} />
+        </div>
       </div>
 
       <div className="kg g4">
         {[
-          { cls: 'sg', l: 'Active Customers', v: '148', d: '▲ 12 new this month', s: '148 buying accounts' },
-          { cls: 'sa', l: 'At-Risk Accounts', v: '8', d: '▼ No order 30+ days', s: 'Combined ₹6.4L/mo at risk' },
-          { cls: 'sr', l: 'Total Outstanding', v: '₹12.8L', d: '▼ 4 overdue 60d+', s: 'Sharma ₹3.4L — 78 days' },
-          { cls: 'si', l: 'Best Segment', v: 'Interior Firms', d: '▲ 31% avg margin', s: '26% of customers, 38% of profit' },
+          { cls: 'sg', l: 'Active Customers',  v: String(d?.total_customers ?? 148),       d: '▲ Buying accounts',          s: 'All active accounts' },
+          { cls: 'sa', l: 'At-Risk Accounts',  v: String(d?.at_risk_count ?? 8),            d: '▼ No order 30+ days',        s: 'Combined revenue at risk' },
+          { cls: 'sr', l: 'Total Outstanding', v: d?.total_outstanding ?? '₹12.8L',         d: '▼ Overdue receivables',      s: 'Sharma ₹3.4L — 78 days' },
+          { cls: 'si', l: 'Best Segment',      v: 'Interior Firms',                         d: '▲ 31% avg margin',           s: '26% of customers, 38% of profit' },
         ].map(k => (
-          <div key={k.l} className={`kc ${k.cls}`}>
+          <div key={k.l} className={`kc ${k.cls}`} style={{ cursor: onGoChat ? 'pointer' : 'default' }}
+            onClick={() => onGoChat?.(`Tell me about ${k.l.toLowerCase()}`)}>
             <div className="kt"><div className="kl">{k.l}</div></div>
             <div className="kv">{k.v}</div>
             <div className="kd wn">{k.d}</div>
@@ -53,32 +77,36 @@ export default function Customers() {
         <table className="tbl">
           <thead>
             <tr>
-              <th>Customer</th><th>Type</th><th>Monthly Revenue</th><th>AI Score</th>
-              <th>Margin</th><th>Last Order</th><th>DSO</th><th>Outstanding</th><th>Status</th>
+              <th>Customer</th><th>Segment</th><th>Monthly Revenue</th><th>AI Score</th>
+              <th>Days Silent</th><th>Outstanding</th><th>Risk</th><th>Status</th>
             </tr>
           </thead>
           <tbody>
             {list.map(c => {
-              const sc = c.st === 'top' ? 'bg' : c.st === 'risk' ? 'ba' : c.st === 'overdue' ? 'br' : 'bsl';
-              const sl = c.st === 'top' ? 'TOP ACCOUNT' : c.st === 'risk' ? 'AT RISK' : c.st === 'overdue' ? 'OVERDUE' : 'ACTIVE';
+              const sc  = c._st === 'top' ? 'bg' : c._st === 'risk' ? 'ba' : c._st === 'overdue' ? 'br' : 'bsl';
+              const lbl = c._st === 'top' ? 'TOP ACCOUNT' : c._st === 'risk' ? 'AT RISK' : c._st === 'overdue' ? 'OVERDUE' : 'ACTIVE';
               return (
-                <tr key={c.n}>
-                  <td style={{ fontWeight: 600 }}>{c.n}</td>
-                  <td style={{ fontSize: '10px', color: 'var(--text2)' }}>{c.t}</td>
-                  <td style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}>{c.r}</td>
+                <tr key={c.name} style={{ cursor: onGoChat ? 'pointer' : 'default' }}
+                  onClick={() => onGoChat?.(`Customer analysis for ${c.name}`)}>
+                  <td style={{ fontWeight: 600 }}>{c.name}</td>
+                  <td style={{ fontSize: '10px', color: 'var(--text2)' }}>{c.segment}</td>
+                  <td style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}>{c.monthly_value}</td>
                   <td>
                     <div className="sbar">
                       <div className="str">
-                        <div className="sf2" style={{ width: `${c.sc}%`, background: c.sc > 80 ? '#16a34a' : c.sc > 60 ? '#d97706' : '#dc2626' }}></div>
+                        <div className="sf2" style={{ width: `${c.score}%`, background: c.score > 80 ? '#16a34a' : c.score > 60 ? '#d97706' : '#dc2626' }} />
                       </div>
-                      <span style={{ fontFamily: 'var(--mono)', fontSize: '9px' }}>{c.sc}</span>
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: '9px' }}>{c.score}</span>
                     </div>
                   </td>
-                  <td style={{ fontFamily: 'var(--mono)', fontWeight: 600, color: parseFloat(c.mg) > 25 ? '#16a34a' : parseFloat(c.mg) > 18 ? '#d97706' : '#dc2626' }}>{c.mg}</td>
-                  <td style={{ fontSize: '11px', color: c.lo.includes('47') || c.lo.includes('38') ? '#dc2626' : c.lo.includes('10') ? '#d97706' : '#4b5563' }}>{c.lo}</td>
-                  <td style={{ fontFamily: 'var(--mono)', fontWeight: 600, color: c.dso > 60 ? '#dc2626' : c.dso > 30 ? '#d97706' : '#16a34a' }}>{c.dso}d</td>
-                  <td style={{ fontFamily: 'var(--mono)', fontWeight: 600, color: c.out === '₹0' ? '#16a34a' : '#dc2626' }}>{c.out}</td>
-                  <td><span className={`bdg ${sc}`}>{sl}</span></td>
+                  <td style={{ fontFamily: 'var(--mono)', fontWeight: 600, color: c.days_since_order > 60 ? '#dc2626' : c.days_since_order > 30 ? '#d97706' : '#16a34a' }}>
+                    {c.days_since_order}d
+                  </td>
+                  <td style={{ fontFamily: 'var(--mono)', fontWeight: 600, color: c.outstanding === '₹0' || c.outstanding === 'Rs.0.0L' ? '#16a34a' : '#dc2626' }}>
+                    {c.outstanding}
+                  </td>
+                  <td><span className={`bdg ${c.risk === 'HIGH' ? 'br' : c.risk === 'MEDIUM' ? 'ba' : 'bg'}`}>{c.risk}</span></td>
+                  <td><span className={`bdg ${sc}`}>{lbl}</span></td>
                 </tr>
               );
             })}

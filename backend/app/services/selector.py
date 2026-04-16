@@ -21,12 +21,24 @@ _GENERIC_EXACT = {
     "how are you", "how r u", "how r you", "how are u", "you there",
     "are you there", "are you working", "test", "testing",
     "start", "begin", "get started", "what should i ask",
+    # Conversational follow-ups
+    "sounds good", "that makes sense", "makes sense", "that's helpful",
+    "that is helpful", "very helpful", "so helpful", "helpful", "useful",
+    "good to know", "interesting", "tell me more", "good point",
+    "i see", "i understand", "i get it", "what else", "anything else",
+    "go on", "continue", "please continue", "ok what else", "more",
+    "nice one", "good advice", "great tip", "that's clear", "clear",
+    "okay great", "okay thanks", "alright", "alright thanks",
+    "thanks a lot", "many thanks", "much appreciated", "appreciated",
 }
 
 _GENERIC_STARTS = (
     "hi ", "hey ", "hello ", "please help", "i need help with",
     "can you help me", "can u help", "i want to know", "tell me",
     "show me what", "what can", "how can", "where do i",
+    "that's ", "that is ", "sounds ", "thanks for ", "good to ",
+    "i appreciate", "love that", "very helpful", "so helpful",
+    "great, ", "nice, ", "ok, ", "okay, ",
 )
 
 _GENERIC_PATTERNS = [
@@ -52,10 +64,33 @@ def is_generic_query(query: str) -> bool:
     q = query.strip().lower().rstrip("!?.,")
     if q in _GENERIC_EXACT:
         return True
-    if any(q.startswith(s) for s in _GENERIC_STARTS) and len(q) < 40:
+    if any(q.startswith(s) for s in _GENERIC_STARTS) and len(q) < 50:
         return True
     if any(p.match(query.strip()) for p in _COMPILED):
         return True
+    # Very short single-word or two-word responses with no inventory keywords
+    _INVENTORY_WORDS = {
+        "stock", "sku", "inventory", "order", "supplier", "customer",
+        "invoice", "freight", "demand", "margin", "purchase", "grn",
+        "finance", "profit", "revenue", "sales", "reorder",
+        "eoq", "safety", "abc", "gmroi", "jit", "vmi", "fifo", "lifo",
+        "forecast", "turnover", "insight", "benchmark",
+        # Finance / working-capital concepts
+        "capital", "working", "cash", "credit", "overdue", "payment",
+        # Supplier / vendor concepts
+        "vendor", "scorecard", "kpi", "kpis", "benchmark", "benchmarks",
+        # Analytical intent words — prevent short concept questions going to generic
+        "formula", "calculate", "analysis", "method", "strategy",
+        "explain", "define", "how", "what", "why",
+        # Additional domain terms
+        "lead", "time", "cycle", "conversion", "days", "rate",
+        "landed", "cost", "holding", "ordering", "carrying",
+    }
+    words = q.split()
+    if len(words) <= 3 and not any(w in _INVENTORY_WORDS for w in words):
+        # Short responses without any business keywords are conversational
+        if len(q) < 30:
+            return True
     return False
 
 KEYWORD_MAP = {
@@ -107,12 +142,69 @@ KEYWORD_MAP = {
         "notify", "alert", "whatsapp", "remind", "write to",
         "communicate",
     ],
+    "po_grn": [
+        "purchase order", "po number", "po-", "create po", "raise po",
+        "new po", "place order", "place a po", "generate po",
+        "grn", "goods receipt", "goods received", "3 way match", "three way match",
+        "discrepancy", "grn mismatch", "invoice mismatch", "overdue po",
+        "pending po", "po status", "grn status", "open po", "partial po",
+        "po value", "po list", "procurement status", "receipt note",
+    ],
+    "sales": [
+        "revenue trend", "sales trend", "monthly revenue", "sales performance",
+        "best selling day", "day of week", "top selling", "sales history",
+        "orders this month", "orders mtd", "category revenue", "product mix",
+        "how much did i sell", "total sales", "revenue by sku", "which day",
+        "highest revenue", "avg order value", "sales growth", "revenue growth",
+    ],
+    "inward": [
+        "inward", "outward", "stock movement", "goods received today",
+        "putaway", "pick pack", "shrinkage", "qc pass", "qc fail",
+        "received today", "how much came in", "stock in", "stock out",
+        "dispatch velocity", "picking error", "grn today", "movement today",
+    ],
 }
+
+# ── Additional keyword expansions (merged into KEYWORD_MAP on import) ──────────
+_EXTRA_KEYWORDS = {
+    # Make demand keywords richer for forecasting / seasonal questions
+    "demand": [
+        "demand", "forecast", "sell", "selling", "sales trend",
+        "season", "monsoon", "diwali", "festive", "slow mover",
+        "fast mover", "moving", "velocity", "next month", "predict",
+        "will sell", "how much", "popular", "top selling sku",
+        "which sku sells most", "best selling", "surge", "growing sku",
+    ],
+    # Finance: add working capital, cash cycle terms
+    "finance": [
+        "margin", "profit", "revenue", "cash", "gst", "tax",
+        "discount leakage", "working capital", "receivable", "payable",
+        "finance", "cash flow", "return", "gmroi", "true cost",
+        "actual margin", "earning", "income", "gstr", "tds",
+        "cash cycle", "cash conversion", "working capital days",
+        "net profit", "gross profit", "ebitda",
+    ],
+    # Stock: add conceptual terms that map to stock tool
+    "stock": [
+        "stock", "inventory", "sku", "sheets", "reorder", "stockout",
+        "low stock", "dead stock", "overstock", "ageing", "aging",
+        "batch", "godown", "warehouse", "on hand", "valuation",
+        "landed cost", "margin per sku", "abc", "critical", "cover",
+        "how many", "quantity", "units", "18mm", "12mm", "8mm",
+        "true landed cost", "stock health", "stock value", "stock level",
+    ],
+}
+
+# Merge extra keywords into KEYWORD_MAP deduplicating
+for _tool, _extra in _EXTRA_KEYWORDS.items():
+    if _tool in KEYWORD_MAP:
+        _existing = set(KEYWORD_MAP[_tool])
+        KEYWORD_MAP[_tool] = list(_existing | set(_extra))
 
 # Tools always included for explain/why queries
 EXPLAIN_TOOLS = ["stock", "supplier", "finance"]
 # Tools always included for act mode
-ACT_BASE_TOOLS = ["stock", "order"]
+ACT_BASE_TOOLS = ["stock", "order", "po_grn"]
 
 
 def select_tools(query: str, mode: str = "ask") -> List[str]:

@@ -63,6 +63,9 @@ Thumbs.db
 *.tmp
 .cache/
 
+# Claude Code local settings (not for version control)
+.claude/
+
 # Backend builds
 *.pyc
 .pytest_cache/

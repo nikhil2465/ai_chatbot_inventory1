@@ -1,8 +1,361 @@
 """
 Root Cause Analysis (RCA) Engine for StockSense AI
 Multi-level, 5-Why and Ishikawa-inspired RCA for inventory and business issues.
+
+Also provides structured RCA templates for the Act mode chatbot responses.
+Templates follow PDCA (Plan-Do-Check-Act) + 5-Why methodology — industry gold standard.
 """
 from typing import List, Dict, Any, Optional
+
+
+# =============================================================================
+# RCA TEMPLATES — Structured problem-solving frameworks for Act mode
+# Format: category → {problem, symptom_keywords, 5_why, fishbone, action_plan}
+# =============================================================================
+
+_RCA_TEMPLATES = {
+    "grn_mismatch_wrong_grade": {
+        "title": "GRN Discrepancy — Wrong Grade Received",
+        "symptom_triggers": ["wrong grade", "incorrect grade", "grn mismatch", "grade mismatch", "grn issue", "wrong item", "wrong product", "grn problem", "grn discrepancy"],
+        "problem_statement": "Supplier shipped wrong product grade — quality/specification deviation.",
+        "5_why": [
+            "Why wrong grade? → Supplier picked incorrect SKU from their warehouse",
+            "Why wrong pick? → Our PO SKU code not matched to supplier's internal code",
+            "Why no code map? → No formal supplier SKU mapping document shared",
+            "Why no check? → Pre-shipment quality inspection not contracted",
+            "Why no inspection? → Cost seen as unnecessary; supplier 'trusted'",
+        ],
+        "fishbone_causes": {
+            "Supplier Process": "No pre-dispatch QC gate; incorrect warehouse picking",
+            "Documentation": "PO lacks supplier-specific SKU codes; ambiguous spec sheet",
+            "Communication": "No grade confirmation email/WhatsApp before dispatch",
+            "Systems": "No 3-way match alert in place before GRN acceptance",
+            "Measurement": "Grade not visually verified at gate by store keeper",
+        },
+        "action_plan": [
+            "IMMEDIATE: Reject shipment / raise Return Memo citing PO vs GRN grade variance",
+            "IMMEDIATE: Document with photos — attach to GRN; block supplier invoice",
+            "THIS WEEK: Share formal SKU mapping table with supplier (your code ↔ their code)",
+            "THIS WEEK: Issue updated PO with supplier's own product code added to description",
+            "THIS MONTH: Add mandatory gate-level grade check to GRN SOP",
+            "THIS MONTH: Include penalty clause for wrong-grade shipments in vendor contract",
+        ],
+        "prevention": "Supplier SKU mapping + pre-dispatch photo confirmation eliminates 90% of grade errors",
+    },
+
+    "grn_mismatch_short_delivery": {
+        "title": "GRN Discrepancy — Short Delivery",
+        "symptom_triggers": ["short delivery", "short by", "shortage", "less quantity", "partial delivery", "short shipment", "less received", "quantity mismatch"],
+        "problem_statement": "Supplier delivered fewer units than ordered — quantity shortfall.",
+        "5_why": [
+            "Why short delivery? → Supplier partially fulfilled order from available stock",
+            "Why partial stock? → Supplier didn't check inventory before accepting our PO",
+            "Why no inventory check? → No acknowledgement/commitment process before dispatch",
+            "Why no commitment? → Purchase process informal; only phone/WhatsApp confirmation",
+            "Why informal? → No formal PO acknowledgement requirement in supplier contract",
+        ],
+        "fishbone_causes": {
+            "Supplier Process": "No stock check before dispatch; partial shipment without notice",
+            "Communication": "Shortfall not communicated before delivery; no advance shipping notice",
+            "Documentation": "No delivery note / advance shipping advice (ASA) process",
+            "Contract": "No minimum fill-rate clause in vendor agreement",
+            "Measurement": "No inbound count verification at unloading",
+        },
+        "action_plan": [
+            "IMMEDIATE: Count & document the shortfall; raise Credit Note for missing quantity",
+            "IMMEDIATE: Call supplier — demand remaining quantity dispatch within 2 days",
+            "THIS WEEK: Require Advance Shipping Notice (ASN) 24 hrs before all deliveries",
+            "THIS WEEK: Add fill-rate KPI tracking to supplier scorecard",
+            "THIS MONTH: Insert 'minimum 95% fill rate per shipment' clause in vendor contract",
+            "THIS MONTH: Auto-flag PO as PARTIAL if GRN qty < 90% of ordered qty",
+        ],
+        "prevention": "ASN + gate counting + fill-rate SLA eliminates short delivery disputes",
+    },
+
+    "grn_mismatch_price_variance": {
+        "title": "GRN Discrepancy — Invoice Price Mismatch",
+        "symptom_triggers": ["price mismatch", "invoice mismatch", "rate mismatch", "price variance", "wrong rate", "invoice dispute", "rate dispute", "price issue", "payment dispute"],
+        "problem_statement": "Supplier invoiced at different rate than agreed PO price.",
+        "5_why": [
+            "Why price mismatch? → Supplier applied updated price list without formal amendment",
+            "Why no amendment? → No price lock clause in PO or vendor agreement",
+            "Why no price lock? → PO raised without formal rate confirmation from supplier",
+            "Why no confirmation? → Price negotiated verbally; not captured in writing",
+            "Why verbal only? → Informal procurement process; no digital price master",
+        ],
+        "fishbone_causes": {
+            "Process": "PO price not formally confirmed by supplier before dispatch",
+            "Documentation": "No signed price agreement for the period; verbal deal only",
+            "Systems": "No automatic 3-way match between PO rate, GRN, and invoice",
+            "Communication": "Price hike not formally communicated before shipment",
+            "Control": "No invoice approval gate before payment release",
+        },
+        "action_plan": [
+            "IMMEDIATE: Block payment on this invoice — raise formal price dispute",
+            "IMMEDIATE: Send written notice citing PO rate vs invoice rate discrepancy",
+            "THIS WEEK: Require supplier to send corrected invoice at PO rate OR credit note",
+            "THIS WEEK: Implement 3-way match: PO rate = GRN rate = Invoice rate before approval",
+            "THIS MONTH: Create a quarterly price master sheet signed by all suppliers",
+            "THIS MONTH: Add payment block rule: invoice >2% above PO rate needs MD approval",
+        ],
+        "prevention": "Signed quarterly price master + 3-way match eliminates all price disputes",
+    },
+
+    "overdue_po_supplier": {
+        "title": "Overdue Purchase Order — Supplier Delay",
+        "symptom_triggers": ["overdue po", "delayed po", "late delivery", "supplier delay", "po overdue", "overdue", "late po", "po delay", "po not received", "delivery delay", "supplier late", "pending po"],
+        "problem_statement": "Purchase order past expected delivery date — supply chain disruption risk.",
+        "5_why": [
+            "Why overdue? → Supplier didn't dispatch by the expected date",
+            "Why no dispatch? → Supplier has production/stock constraints not communicated",
+            "Why not communicated? → No proactive delay notification process with supplier",
+            "Why no notification? → No SLA with penalty for late communication",
+            "Why no SLA? → Vendor agreement doesn't include delivery performance clauses",
+        ],
+        "fishbone_causes": {
+            "Supplier Capacity": "Supplier over-committed across multiple buyers",
+            "Communication": "No proactive delay notification; follow-up burden on buyer",
+            "Planning": "Order placed with insufficient lead time buffer",
+            "Contract": "No delivery penalty / escalation clause in vendor agreement",
+            "Monitoring": "No automated PO tracking or overdue alert system",
+        },
+        "action_plan": [
+            "IMMEDIATE: Call supplier operations head — get firm revised ETA in writing",
+            "IMMEDIATE: Assess stock cover days — if <7 days, emergency source from Century/Greenply",
+            "TODAY: Put overdue PO on daily tracking; escalate after 24 hrs of no response",
+            "THIS WEEK: Formal written notice to supplier — delay impacts SLA score",
+            "THIS WEEK: Qualify alternate supplier for same SKU (dual-source strategy)",
+            "THIS MONTH: Add 0.5% price reduction per day delay clause to vendor contract",
+        ],
+        "prevention": "Early warning system (T-2 days reminder) + alternate supplier means zero stockout risk",
+    },
+
+    "stockout_prevention": {
+        "title": "Stockout Prevention — Critical SKU Reorder",
+        "symptom_triggers": ["stockout", "out of stock", "critical low", "low stock", "reorder", "running low", "stock running out", "critical stock", "stock shortage", "no stock", "stock action", "urgent order"],
+        "problem_statement": "SKU approaching zero stock — lost sales and customer dissatisfaction risk.",
+        "5_why": [
+            "Why low stock? → Reorder point reached but PO not placed in time",
+            "Why PO not placed? → Manual reorder check missed; no automated alert",
+            "Why no automation? → Reorder points set but not linked to alert system",
+            "Why no link? → Stock monitoring still manual (daily physical count or Tally)",
+            "Why manual? → No real-time stock tracking or DMS reorder module configured",
+        ],
+        "fishbone_causes": {
+            "Process": "Manual stock checking; reorder trigger missed by staff",
+            "Systems": "No automated reorder alert when stock hits threshold",
+            "Supplier Lead Time": "6-7 day lead time not factored into safety stock calculation",
+            "Demand": "Demand spike not anticipated; faster-than-forecast consumption",
+            "Planning": "Safety stock not recalculated after demand velocity increased",
+        },
+        "action_plan": [
+            "IMMEDIATE: Place emergency PO with Century Plyboards (96% on-time, fastest lead time)",
+            "IMMEDIATE: Check substitute SKU availability to partially fulfil pending orders",
+            "TODAY: Call top 3 customers with pending orders — set revised delivery expectations",
+            "THIS WEEK: Recalculate safety stock = (Max daily demand × Max lead time) for all A-SKUs",
+            "THIS WEEK: Set automated reorder alerts for all A-class SKUs at 15-day cover",
+            "THIS MONTH: Implement min-max inventory policy: min = reorder point, max = 30d cover",
+        ],
+        "prevention": "Automated reorder at 15-day cover + Century as backup source = zero stockouts",
+    },
+
+    "dead_stock_clearance": {
+        "title": "Dead Stock Clearance — Cash Recovery Plan",
+        "symptom_triggers": ["dead stock", "non-moving", "aged stock", "slow mover", "old stock", "slow moving", "excess stock", "overstock", "stuck stock", "no sales", "clearance", "not selling", "idle stock"],
+        "problem_statement": "Inventory with no movement for 90+ days — capital locked, carrying cost rising.",
+        "5_why": [
+            "Why dead stock? → Product demand shifted; over-purchased based on old patterns",
+            "Why over-purchased? → Order quantities based on historical sales, not current demand",
+            "Why no demand update? → No demand forecasting tool or monthly SKU velocity review",
+            "Why no review? → Category management process not defined; purchase is reactive",
+            "Why reactive? → No ABC-based purchasing discipline for C-class SKUs",
+        ],
+        "fishbone_causes": {
+            "Purchasing": "Bulk buying without demand signal for slow-moving SKUs",
+            "Forecasting": "No SKU-level demand review before placing replenishment orders",
+            "Pricing": "No automatic discount trigger for 60-day non-movers",
+            "Market": "Customer preference shifted (e.g., from 6mm to 8mm grade)",
+            "Process": "No monthly dead stock review meeting with purchase team",
+        },
+        "action_plan": [
+            "IMMEDIATE: List all dead SKUs with value, age, and buyer contact",
+            "TODAY: Call top 5 contractors — offer 12-15% discount for dead stock clearance",
+            "THIS WEEK: Bundle dead SKUs with fast-moving A-SKU orders (e.g., free 4mm with 18mm BWP)",
+            "THIS WEEK: Check supplier return policy — return slow-movers if within 90-day window",
+            "THIS MONTH: Set automatic 10% discount trigger for any SKU with 60+ days no movement",
+            "THIS MONTH: Add 'dead stock review' as standing agenda item in weekly ops meeting",
+        ],
+        "prevention": "Monthly SKU velocity review + automatic discount trigger = dead stock under 2% of inventory",
+    },
+
+    "working_capital_high": {
+        "title": "Working Capital Optimisation",
+        "symptom_triggers": ["working capital", "cash cycle", "cash flow", "dso", "dio", "dpo", "cash stuck", "cash locked", "collections", "receivables", "outstanding", "credit period", "payment terms"],
+        "problem_statement": "Cash cycle exceeding 40-day target — money working for customers, not the business.",
+        "5_why": [
+            "Why high cash cycle? → DSO 34d + DIO 22d > DPO 8d = 48d total",
+            "Why high DSO? → Customers paying at end of credit period; no early payment incentive",
+            "Why high DIO? → Dead stock inflating average inventory days",
+            "Why low DPO? → Paying suppliers in 8 days when 30-day terms available",
+            "Why not using terms? → Team wants to maintain 'good relationship'; terms not negotiated",
+        ],
+        "fishbone_causes": {
+            "Receivables (DSO)": "No early payment discount; collections team lacks escalation authority",
+            "Inventory (DIO)": "₹7.8L dead stock adding ~4 days to DIO",
+            "Payables (DPO)": "Paying Century/Greenply in 8 days vs available 30-day terms",
+            "Process": "No cash flow dashboard; WC impact not measured weekly",
+            "Pricing": "No dynamic discount for fast-paying customers",
+        },
+        "action_plan": [
+            "IMMEDIATE: Offer 1.5% early payment discount to customers paying within 10 days",
+            "TODAY: Call Century Plyboards — negotiate NET-30 payment terms (they want your volume)",
+            "THIS WEEK: Prioritise dead stock clearance (₹7.8L) to reduce DIO by 3-4 days",
+            "THIS WEEK: Send overdue collection notices to Sharma Constructions (₹3.4L, 78d)",
+            "THIS MONTH: Target: DSO 28d, DIO 18d, DPO 22d → Cash cycle <40 days",
+            "THIS MONTH: Review credit limits for all HIGH-risk customers; reduce or block",
+        ],
+        "prevention": "Early payment discount + NET-30 with suppliers + dead stock clearance = cash cycle under 40 days",
+    },
+
+    "supplier_reliability": {
+        "title": "Supplier Reliability Improvement",
+        "symptom_triggers": ["supplier reliability", "on-time", "delivery performance", "supplier score", "supplier problem", "bad supplier", "vendor issue", "supplier issue", "poor supplier", "supplier performance", "vendor performance", "supplier rating"],
+        "problem_statement": "Supplier below 80% on-time delivery — unpredictable supply chain.",
+        "5_why": [
+            "Why low on-time rate? → Supplier capacity constrained; multiple buyer commitments",
+            "Why over-committed? → No visibility into their production schedule shared with us",
+            "Why no visibility? → No formal vendor performance review meeting scheduled",
+            "Why no meeting? → Relationship managed informally via sales rep only",
+            "Why informal? → No supplier development programme or vendor rating system",
+        ],
+        "fishbone_causes": {
+            "Supplier Capacity": "Supplier production constrained; other buyers taking priority",
+            "Relationships": "No formal business review; no penalty/incentive structure",
+            "Alternative Sourcing": "No qualified alternate supplier for this product category",
+            "Contract": "No delivery performance clause; supplier faces no consequence",
+            "Communication": "Delay communicated only when it's already too late to act",
+        },
+        "action_plan": [
+            "IMMEDIATE: Put supplier on formal probation — minimum orders only until score improves",
+            "IMMEDIATE: Source 30% of volume from alternate supplier to reduce dependency",
+            "THIS WEEK: Schedule formal supplier review meeting — share their scorecard data",
+            "THIS WEEK: Add penalty clause: 0.5% credit note per day delay beyond ETA",
+            "THIS MONTH: Qualify secondary supplier for same product category (dual-source)",
+            "THIS MONTH: Monthly supplier performance dashboard — share with supplier monthly",
+        ],
+        "prevention": "Dual-source policy + formal monthly review + penalty clause = 95%+ on-time delivery",
+    },
+}
+
+
+def get_act_rca_templates(query: str, tool_data: dict) -> str:
+    """
+    Return relevant RCA templates for Act mode based on the user query.
+    Injects structured PDCA + 5-Why templates as context for the LLM.
+    """
+    q = query.lower()
+    matched = []
+
+    for key, tmpl in _RCA_TEMPLATES.items():
+        if any(trigger in q for trigger in tmpl["symptom_triggers"]):
+            matched.append(tmpl)
+
+    # Also check tool data context (po_grn data signals)
+    po_data = tool_data.get("po_grn", {})
+    supplier_data = tool_data.get("supplier", {})
+    stock_data = tool_data.get("stock", {})
+
+    if not matched:
+        # Infer from context
+        if po_data.get("grn_discrepancies"):
+            matched.append(_RCA_TEMPLATES["grn_mismatch_price_variance"])
+        if any(s.get("on_time_pct", 100) < 80 for s in supplier_data.get("suppliers", [])):
+            if _RCA_TEMPLATES["supplier_reliability"] not in matched:
+                matched.append(_RCA_TEMPLATES["supplier_reliability"])
+        if stock_data.get("critical_low"):
+            if _RCA_TEMPLATES["stockout_prevention"] not in matched:
+                matched.append(_RCA_TEMPLATES["stockout_prevention"])
+        if stock_data.get("dead_stock"):
+            if _RCA_TEMPLATES["dead_stock_clearance"] not in matched:
+                matched.append(_RCA_TEMPLATES["dead_stock_clearance"])
+
+    if not matched:
+        # Default fallback: always return the most business-relevant templates.
+        # This ensures Act mode ALWAYS has structured RCA context.
+        # Priority order mirrors the live DMS snapshot (overdue POs + low stock are known issues).
+        matched = [
+            _RCA_TEMPLATES["overdue_po_supplier"],
+            _RCA_TEMPLATES["stockout_prevention"],
+        ]
+
+    lines = ["=== ACT MODE — RCA TEMPLATES (Use these structured frameworks) ===\n"]
+    for tmpl in matched[:2]:  # Max 2 templates to keep context lean
+        lines.append(f"## {tmpl['title']}")
+        lines.append(f"Problem: {tmpl['problem_statement']}")
+        lines.append("\n5-Why Root Cause Chain:")
+        for w in tmpl["5_why"]:
+            lines.append(f"  {w}")
+        lines.append("\nKey Causes (Fishbone):")
+        for cat, cause in tmpl["fishbone_causes"].items():
+            lines.append(f"  [{cat}] {cause}")
+        lines.append("\nRecommended Action Plan:")
+        for action in tmpl["action_plan"]:
+            lines.append(f"  → {action}")
+        lines.append(f"\nPrevention Note: {tmpl['prevention']}\n")
+
+    return "\n".join(lines)
+
+
+def get_inline_rca_tip(query: str, tool_data: dict, mode: str = "ask") -> str:
+    """
+    Returns a compact RCA insight injected into Ask/Explain mode responses.
+    Finds the most relevant template and extracts a focused 3-Why summary + top action.
+    Returns empty string if no template matches (caller should handle gracefully).
+    """
+    q = query.lower()
+
+    # Try direct keyword match first
+    best = None
+    for tmpl in _RCA_TEMPLATES.values():
+        if any(trigger in q for trigger in tmpl["symptom_triggers"]):
+            best = tmpl
+            break
+
+    # Fall back to context inference from tool data
+    if not best:
+        stock_data    = tool_data.get("stock", {})
+        supplier_data = tool_data.get("supplier", {})
+        po_data       = tool_data.get("po_grn", {})
+        finance_data  = tool_data.get("finance", {})
+
+        if po_data.get("grn_discrepancies") or "grn" in q:
+            best = _RCA_TEMPLATES["grn_mismatch_price_variance"]
+        elif any(s.get("on_time_pct", 100) < 80 for s in supplier_data.get("suppliers", [])):
+            best = _RCA_TEMPLATES["supplier_reliability"]
+        elif stock_data.get("critical_low") or any(w in q for w in ["low stock", "stockout", "reorder", "critical"]):
+            best = _RCA_TEMPLATES["stockout_prevention"]
+        elif stock_data.get("dead_stock") or any(w in q for w in ["dead stock", "slow mover", "ageing", "aging"]):
+            best = _RCA_TEMPLATES["dead_stock_clearance"]
+        elif any(w in q for w in ["working capital", "cash", "receivable", "overdue invoice", "dso"]):
+            best = _RCA_TEMPLATES["working_capital_high"]
+        elif any(w in q for w in ["margin", "profit", "landed cost", "freight cost"]):
+            best = _RCA_TEMPLATES["grn_mismatch_price_variance"]
+
+    if not best:
+        return ""  # No relevant template — don't inject noise
+
+    # Build compact tip (3 Whys + top 2 actions)
+    why_lines = "\n".join(f"  {i+1}. {w}" for i, w in enumerate(best["5_why"][:3]))
+    action_lines = "\n".join(f"  → {a}" for a in best["action_plan"][:2])
+
+    prefix = "📋 **RCA Insight**" if mode == "explain" else "🔎 **Root Cause**"
+    return (
+        f"\n\n---\n{prefix} — {best['title']}\n"
+        f"**Problem**: {best['problem_statement']}\n"
+        f"**Why Chain (Top 3)**:\n{why_lines}\n"
+        f"**Immediate Actions**:\n{action_lines}\n"
+        f"**Prevention**: {best['prevention']}"
+    )
 
 
 def run_rca(

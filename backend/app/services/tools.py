@@ -302,6 +302,109 @@ async def email_tool(query: Optional[str] = None) -> dict:
     }
 
 
+async def po_grn_tool(query: Optional[str] = None) -> dict:
+    """Detailed PO status, GRN match rates, discrepancy log, and procurement KPIs."""
+    db_result = await _try_db("query_po_grn", query or "")
+    if db_result:
+        return db_result
+    # Mock fallback — mirrors the static data in POGRN.jsx
+    return {
+        "kpis": {
+            "open_pos": 8,
+            "open_po_value": "Rs.12.4L",
+            "overdue_pos": 2,
+            "grn_match_rate": "96%",
+            "grn_mismatches_mtd": 3,
+            "grn_variance_value": "Rs.8,400",
+            "partial_pos": 3,
+        },
+        "open_pos": [
+            {
+                "po_number": "PO-7734", "supplier": "Greenply Industries",
+                "sku": "12mm MR Plain", "qty_ordered": 300, "qty_received": 180,
+                "fill_pct": 60, "value": "Rs.2.16L", "status": "OVERDUE", "overdue_days": 2,
+            },
+            {
+                "po_number": "PO-7732", "supplier": "Century Plyboards",
+                "sku": "12mm BWP", "qty_ordered": 150, "qty_received": 130,
+                "fill_pct": 87, "value": "Rs.1.73L", "status": "PARTIAL", "overdue_days": 0,
+            },
+            {
+                "po_number": "PO-7731", "supplier": "Gauri Laminates",
+                "sku": "8mm Flexi", "qty_ordered": 200, "qty_received": 76,
+                "fill_pct": 38, "value": "Rs.0.49L", "status": "OVERDUE", "overdue_days": 4,
+            },
+        ],
+        "grn_discrepancies": [
+            {
+                "grn_number": "GRN-4421", "po_number": "PO-7728",
+                "supplier": "Gauri Laminates", "discrepancy_amt": "Rs.3,200",
+                "notes": "Wrong Grade — 8mm MR received vs 8mm BWP ordered",
+                "action": "Return & Reorder",
+            },
+            {
+                "grn_number": "GRN-4418", "po_number": "PO-7725",
+                "supplier": "Gauri Laminates", "discrepancy_amt": "Rs.2,800",
+                "notes": "Short by 14 sheets", "action": "Raise Credit Note",
+            },
+            {
+                "grn_number": "GRN-4412", "po_number": "PO-7719",
+                "supplier": "Gauri Laminates", "discrepancy_amt": "Rs.2,400",
+                "notes": "Price Mismatch: Invoice Rs.156 vs PO rate Rs.142",
+                "action": "Block Payment",
+            },
+        ],
+        "data_source": "mock",
+    }
+
+
+async def sales_tool(query: Optional[str] = None) -> dict:
+    """Sales revenue trends, margin by SKU, day-of-week patterns."""
+    db_result = await _try_db("query_sales", query or "")
+    if db_result:
+        return db_result
+    return {
+        "revenue_mtd": "Rs.28.4L",
+        "orders_mtd": 486,
+        "avg_order_value": "Rs.58,400",
+        "monthly_revenue": [
+            {"month": "May", "revenue": 19.2}, {"month": "Jun", "revenue": 20.1},
+            {"month": "Jul", "revenue": 21.4}, {"month": "Aug", "revenue": 22.8},
+            {"month": "Sep", "revenue": 21.6}, {"month": "Oct", "revenue": 20.4},
+            {"month": "Nov", "revenue": 22.1}, {"month": "Dec", "revenue": 23.8},
+            {"month": "Jan", "revenue": 24.4}, {"month": "Feb", "revenue": 25.2},
+            {"month": "Mar", "revenue": 26.0}, {"month": "Apr", "revenue": 28.4},
+        ],
+        "day_of_week": [
+            {"day": "Mon", "avg": 42.0}, {"day": "Fri", "avg": 62.4}, {"day": "Sat", "avg": 78.6},
+        ],
+        "top_sku": "18mm BWP",
+        "revenue_growth": "+9.2% MoM",
+        "data_source": "mock",
+    }
+
+
+async def inward_tool(query: Optional[str] = None) -> dict:
+    """Inward/outward stock movements, GRN summary, shrinkage."""
+    db_result = await _try_db("query_inward", query or "")
+    if db_result:
+        return db_result
+    return {
+        "inward_today": "Rs.6.8L",
+        "outward_today": "Rs.8.2L",
+        "inward_count": 12,
+        "outward_count": 18,
+        "shrinkage_mtd": "Rs.0.24L",
+        "qc_pass_rate": "94%",
+        "recent_grn": [
+            {"grn": "GRN-4424", "supplier": "Century Plyboards",  "value": "Rs.3.8L", "status": "MATCH",    "date": "today"},
+            {"grn": "GRN-4423", "supplier": "Greenply Industries", "value": "Rs.1.6L", "status": "MATCH",    "date": "today"},
+            {"grn": "GRN-4422", "supplier": "Gauri Laminates",    "value": "Rs.1.4L", "status": "MISMATCH", "date": "today"},
+        ],
+        "data_source": "mock",
+    }
+
+
 TOOLS = {
     "stock":    stock_tool,
     "demand":   demand_tool,
@@ -311,4 +414,7 @@ TOOLS = {
     "order":    order_tool,
     "freight":  freight_tool,
     "email":    email_tool,
+    "po_grn":   po_grn_tool,
+    "sales":    sales_tool,
+    "inward":   inward_tool,
 }

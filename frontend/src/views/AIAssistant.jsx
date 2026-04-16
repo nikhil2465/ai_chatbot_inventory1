@@ -2,6 +2,11 @@
  * InvenIQ — AI Assistant
  * Professional streaming chat component with Ask / Explain / Act modes,
  * MCP tool chips, RCA badge, follow-up suggestions, and markdown rendering.
+ *
+ * New features:
+ *   - PO Creation: OpenAI function-calling driven PO creation with inline confirmation card
+ *   - Act mode RCA templates: structured root-cause frameworks shown in responses
+ *   - po_grn tool chip: live PO & GRN data shown alongside response metadata
  */
 import React, {
   useState, useEffect, useRef, useCallback, useMemo,
@@ -32,14 +37,14 @@ const MODES = [
     icon: '⚡',
     kbd: '3',
     color: 'act',
-    desc: 'Generate step-by-step action plans you can execute today.',
+    desc: 'Generate step-by-step action plans + RCA templates.',
   },
 ];
 
 const MODE_DESC = {
   ask:     'Get instant, data-backed answers from your inventory.',
   explain: 'Understand root causes with detailed analysis.',
-  act:     'Generate step-by-step action plans you can execute today.',
+  act:     'Generate executable action plans with RCA templates.',
 };
 
 const SUGGESTIONS = [
@@ -53,12 +58,12 @@ const SUGGESTIONS = [
     ],
   },
   {
-    category: '📋 Orders',
+    category: '📋 Procurement',
     color: '#7c3aed',
     items: [
-      'Which orders are at risk of delay?',
-      'Show my top 5 customers by revenue',
-      'What is my current order fulfilment rate?',
+      'Show status of all open purchase orders',
+      'Which GRN discrepancies need action today?',
+      'Create a PO for 300 sheets of 18mm BWP from Century',
     ],
   },
   {
@@ -79,38 +84,103 @@ const SUGGESTIONS = [
       'What is my dead stock value?',
     ],
   },
+  {
+    category: '📚 Learn',
+    color: '#0891b2',
+    items: [
+      'What is EOQ and how do I calculate it for my business?',
+      'Explain safety stock formula with my actual data',
+      'How does ABC analysis work? Show my current ABC classification',
+    ],
+  },
+  {
+    category: '💡 Daily Insights',
+    color: '#16a34a',
+    items: [
+      'Show me today\'s business insights',
+      'What are my top priorities for this week?',
+      'Give me a complete business health check',
+    ],
+  },
 ];
 
 const TOOL_CHIP_CLASS = {
   stock: 'tool-stock', finance: 'tool-finance', supplier: 'tool-supplier',
   customer: 'tool-customer', order: 'tool-order', demand: 'tool-demand',
-  freight: 'tool-freight', email: 'tool-email',
+  freight: 'tool-freight', email: 'tool-email', po_grn: 'tool-supplier',
+  sales: 'tool-sales', inward: 'tool-inward',
+  knowledge: 'tool-knowledge', insights: 'tool-insights',
 };
 
-// ─── Tiny Markdown Renderer ───────────────────────────────────────────────────
+const TOOL_EMOJI = {
+  stock: '📦', finance: '💰', supplier: '🏭', customer: '👥',
+  order: '📋', demand: '📈', freight: '🚚', email: '📧', po_grn: '📋',
+  sales: '💹', inward: '🔄',
+  knowledge: '📚', insights: '💡',
+};
+
+// ─── Markdown Renderer (Professional — tables, headings, inline formatting) ────
 function MarkdownRenderer({ text }) {
   const rendered = useMemo(() => {
     if (!text) return '';
     const lines = text.split('\n');
     const out = [];
-    let inUl = false, inOl = false;
+    let inUl = false, inOl = false, inTable = false;
+    let tableHeader = null, tableRows = [];
 
     const closeList = () => {
       if (inUl) { out.push('</ul>'); inUl = false; }
       if (inOl) { out.push('</ol>'); inOl = false; }
     };
 
-    lines.forEach((raw, i) => {
+    const closeTable = () => {
+      if (!inTable) return;
+      inTable = false;
+      if (tableHeader) {
+        const ths = tableHeader.map(h => `<th>${formatInline(h.trim())}</th>`).join('');
+        let html = `<div class="iq-md-table-wrap"><table class="iq-md-table"><thead><tr>${ths}</tr></thead><tbody>`;
+        html += tableRows.map(row => `<tr>${row.map(c => `<td>${formatInline(c.trim())}</td>`).join('')}</tr>`).join('');
+        html += '</tbody></table></div>';
+        out.push(html);
+      }
+      tableHeader = null;
+      tableRows = [];
+    };
+
+    const parseTableRow = (line) =>
+      line.replace(/^\|/, '').replace(/\|$/, '').split('|');
+
+    const isSeparator = (line) => /^\|[-| :]+\|$/.test(line.trim());
+
+    lines.forEach((raw) => {
       const line = raw;
+
+      // Table row detection
+      if (line.trim().startsWith('|') && line.trim().endsWith('|')) {
+        closeList();
+        if (isSeparator(line)) return; // skip separator rows
+        const cells = parseTableRow(line.trim());
+        if (!inTable) {
+          inTable = true;
+          tableHeader = cells;
+        } else {
+          tableRows.push(cells);
+        }
+        return;
+      }
+
+      // Close table before handling other elements
+      closeTable();
+
       if (/^### (.+)/.test(line)) {
         closeList();
-        out.push(`<h3>${line.replace(/^### /, '')}</h3>`);
+        out.push(`<h3>${formatInline(line.replace(/^### /, ''))}</h3>`);
       } else if (/^## (.+)/.test(line)) {
         closeList();
-        out.push(`<h2>${line.replace(/^## /, '')}</h2>`);
+        out.push(`<h2>${formatInline(line.replace(/^## /, ''))}</h2>`);
       } else if (/^#### (.+)/.test(line)) {
         closeList();
-        out.push(`<h4>${line.replace(/^#### /, '')}</h4>`);
+        out.push(`<h4>${formatInline(line.replace(/^#### /, ''))}</h4>`);
       } else if (/^\*\*(.+)\*\*$/.test(line.trim())) {
         closeList();
         out.push(`<p><strong>${line.trim().replace(/^\*\*|\*\*$/g, '')}</strong></p>`);
@@ -133,6 +203,7 @@ function MarkdownRenderer({ text }) {
       }
     });
     closeList();
+    closeTable();
     return out.join('');
   }, [text]);
 
@@ -203,23 +274,273 @@ function parseToolChips(tools) {
   return tools.map((t) => {
     const key = typeof t === 'string' ? t : t.tool || '';
     const label = key.replace('query_', '').replace(/_/g, ' ');
-    const cls = TOOL_CHIP_CLASS[label.split(' ')[0]] || 'tool-order';
-    const emoji = {
-      stock: '📦', finance: '💰', supplier: '🏭', customer: '👥',
-      order: '📋', demand: '📈', freight: '🚚', email: '📧',
-    }[label.split(' ')[0]] || '🔧';
-    return { key, label, cls, emoji };
+    const baseKey = key.replace(/_/g, '');
+    const cls = TOOL_CHIP_CLASS[key] || TOOL_CHIP_CLASS[label.split(' ')[0]] || 'tool-order';
+    const emoji = TOOL_EMOJI[key] || TOOL_EMOJI[label.split(' ')[0]] || '🔧';
+    return { key, label, cls, emoji, baseKey };
   });
 }
 
-// ─── Single Message ───────────────────────────────────────────────────────────
-function AiMessage({ msg, isStreaming, onFollowUp }) {
-  const [copied, setCopied] = useState(false);
-  const [reaction, setReaction] = useState(null); // 'up' | 'dn' | null
+// ─── PO Confirmation Card — Professional Worldwide PO Template ───────────────
+function POConfirmCard({ action, onConfirm, onCancel }) {
+  const [busy, setBusy] = useState(false);
+  const po = action.po_data || {};
 
-  const modeInfo = MODES.find((m) => m.id === msg.mode) || MODES[0];
-  const toolChips = parseToolChips(msg.tools);
-  const rcaFlag  = msg.rca_applied;
+  // ── Success State ────────────────────────────────────────────────────────
+  if (action.status === 'success') {
+    const res = action.result || {};
+    const totalVal = res.total_value > 0
+      ? `₹${Number(res.total_value).toLocaleString('en-IN')}`
+      : null;
+    return (
+      <div style={{
+        marginTop: 14, fontFamily: "'Segoe UI', Arial, sans-serif",
+        border: '2px solid #16a34a', borderRadius: 10, overflow: 'hidden',
+        boxShadow: '0 4px 16px rgba(22,163,74,0.12)',
+      }}>
+        <div style={{ background: '#16a34a', padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 18 }}>✅</span>
+          <div>
+            <div style={{ color: '#fff', fontWeight: 700, fontSize: 13 }}>Purchase Order Issued Successfully</div>
+            <div style={{ color: '#bbf7d0', fontSize: 11 }}>PO has been created and added to your procurement records</div>
+          </div>
+        </div>
+        <div style={{ background: '#f0fdf4', padding: '14px 18px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 24px', fontSize: 12, color: '#166534' }}>
+            <div><span style={{ color: '#15803d', fontWeight: 600 }}>PO Number: </span>
+              <code style={{ background: '#dcfce7', padding: '2px 8px', borderRadius: 4, fontWeight: 700, letterSpacing: '0.5px' }}>
+                {res.po_number || 'PO-DEMO'}
+              </code>
+            </div>
+            <div><span style={{ color: '#15803d', fontWeight: 600 }}>Date Issued: </span>{new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
+            <div><span style={{ color: '#15803d', fontWeight: 600 }}>Vendor: </span>{res.supplier || po.supplier_name}</div>
+            <div><span style={{ color: '#15803d', fontWeight: 600 }}>Product: </span>{res.sku || po.sku_name}</div>
+            <div><span style={{ color: '#15803d', fontWeight: 600 }}>Quantity: </span>{(res.quantity || po.quantity)?.toLocaleString('en-IN')} sheets</div>
+            <div><span style={{ color: '#15803d', fontWeight: 600 }}>Expected Delivery: </span>{res.expected_date || po.expected_date || 'Within 7 days'}</div>
+            {totalVal && <div style={{ gridColumn: '1/-1' }}><span style={{ color: '#15803d', fontWeight: 600 }}>Total Order Value (incl. GST): </span><strong>{totalVal}</strong></div>}
+          </div>
+          {res.demo_mode && (
+            <div style={{ marginTop: 8, color: '#6b7280', fontSize: 10, borderTop: '1px solid #d1fae5', paddingTop: 6 }}>
+              ℹ️ Demo mode — PO not persisted. Connect MySQL to store in database.
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Error State ──────────────────────────────────────────────────────────
+  if (action.status === 'error') {
+    return (
+      <div style={{
+        marginTop: 12, padding: '12px 16px', background: '#fef2f2',
+        border: '1px solid #fca5a5', borderRadius: 10, fontSize: 12, color: '#dc2626',
+      }}>
+        ❌ <strong>PO creation failed:</strong> {action.error || 'Unknown error'}
+      </div>
+    );
+  }
+
+  // ── Cancelled State ──────────────────────────────────────────────────────
+  if (action.status === 'cancelled') {
+    return (
+      <div style={{ marginTop: 10, fontSize: 11, color: 'var(--muted)', fontStyle: 'italic' }}>
+        PO creation cancelled. You can ask me to create a new PO anytime.
+      </div>
+    );
+  }
+
+  // ── Pending — Professional PO Document Template ──────────────────────────
+  const today = new Date();
+  const todayStr = today.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  const deliveryDate = po.expected_date
+    ? new Date(po.expected_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+    : (() => { const d = new Date(today); d.setDate(d.getDate() + 7); return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); })();
+
+  const qty = Number(po.quantity) || 0;
+  const unitPrice = Number(po.unit_price) || 0;
+  const hasPrice = unitPrice > 0;
+  const subtotal = hasPrice ? qty * unitPrice : 0;
+  const gst = hasPrice ? Math.round(subtotal * 0.18) : 0;
+  const grandTotal = subtotal + gst;
+
+  const fmtINR = (n) => `₹${n.toLocaleString('en-IN')}`;
+
+  // Table styles
+  const thStyle = {
+    background: '#1e3a5f', color: '#fff', fontSize: 10, fontWeight: 700,
+    padding: '6px 8px', textAlign: 'left', letterSpacing: '0.5px', textTransform: 'uppercase',
+  };
+  const tdStyle = {
+    fontSize: 11, padding: '7px 8px', color: '#1e293b',
+    borderBottom: '1px solid #e2e8f0', verticalAlign: 'top',
+  };
+  const labelStyle = { fontSize: 9, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: 2, display: 'block' };
+  const valueStyle = { fontSize: 12, color: '#0f172a', fontWeight: 500 };
+
+  const handleConfirm = async () => {
+    setBusy(true);
+    await onConfirm(po);
+    setBusy(false);
+  };
+
+  return (
+    <div style={{
+      marginTop: 14, fontFamily: "'Segoe UI', Arial, sans-serif",
+      border: '1.5px solid #cbd5e1', borderRadius: 10, overflow: 'hidden',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.10)',
+      maxWidth: 680,
+    }}>
+
+      {/* ── PO Header ── */}
+      <div style={{ background: '#1e3a5f', padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <div style={{ color: '#93c5fd', fontSize: 9, fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', marginBottom: 4 }}>StockSense Plywood Dealers</div>
+          <div style={{ color: '#fff', fontSize: 18, fontWeight: 800, letterSpacing: '1px' }}>PURCHASE ORDER</div>
+          <div style={{ color: '#94a3b8', fontSize: 10, marginTop: 3 }}>Bangalore, Karnataka · GSTIN: 29AABCS1234F1ZX</div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ background: '#f59e0b', color: '#1e3a5f', fontSize: 10, fontWeight: 800, padding: '3px 10px', borderRadius: 4, letterSpacing: '0.5px', marginBottom: 6, display: 'inline-block' }}>DRAFT — PENDING APPROVAL</div>
+          <div style={{ color: '#94a3b8', fontSize: 10 }}><span style={{ color: '#cbd5e1', fontWeight: 600 }}>Date: </span>{todayStr}</div>
+          <div style={{ color: '#94a3b8', fontSize: 10 }}><span style={{ color: '#cbd5e1', fontWeight: 600 }}>Delivery By: </span>{deliveryDate}</div>
+        </div>
+      </div>
+
+      {/* ── Vendor + Ship To ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0, background: '#f8fafc' }}>
+        <div style={{ padding: '12px 20px', borderRight: '1px solid #e2e8f0' }}>
+          <div style={{ ...labelStyle }}>Vendor / Bill To</div>
+          <div style={{ ...valueStyle, fontWeight: 700 }}>{po.supplier_name || '—'}</div>
+          <div style={{ fontSize: 10, color: '#64748b', marginTop: 2, lineHeight: 1.5 }}>
+            Authorised Supplier<br />
+            {po.supplier_name?.toLowerCase().includes('century') ? 'Mumbai, Maharashtra' : 'India'}
+          </div>
+        </div>
+        <div style={{ padding: '12px 20px' }}>
+          <div style={{ ...labelStyle }}>Ship / Deliver To</div>
+          <div style={{ ...valueStyle, fontWeight: 700 }}>StockSense Plywood Dealers</div>
+          <div style={{ fontSize: 10, color: '#64748b', marginTop: 2, lineHeight: 1.5 }}>
+            Main Warehouse, Bangalore<br />
+            Karnataka — 560001
+          </div>
+        </div>
+      </div>
+
+      {/* ── Order Terms Bar ── */}
+      <div style={{ background: '#eef2ff', padding: '7px 20px', display: 'flex', gap: 28, borderTop: '1px solid #e2e8f0', borderBottom: '1px solid #e2e8f0' }}>
+        {[
+          ['Payment Terms', 'Net 30 Days'],
+          ['Delivery Terms', 'FOB — Destination'],
+          ['Currency', 'INR (Indian Rupee)'],
+          ['GST Rate', '18% (IGST)'],
+        ].map(([lbl, val]) => (
+          <div key={lbl}>
+            <span style={{ fontSize: 9, color: '#6366f1', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block' }}>{lbl}</span>
+            <span style={{ fontSize: 10, color: '#1e293b', fontWeight: 600 }}>{val}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Line Items Table ── */}
+      <div style={{ padding: '0 0 0 0' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              <th style={{ ...thStyle, width: 30 }}>#</th>
+              <th style={{ ...thStyle }}>Description / SKU</th>
+              <th style={{ ...thStyle, width: 70, textAlign: 'center' }}>Qty (Sheets)</th>
+              <th style={{ ...thStyle, width: 100, textAlign: 'right' }}>Unit Price</th>
+              <th style={{ ...thStyle, width: 110, textAlign: 'right' }}>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={{ ...tdStyle, textAlign: 'center', color: '#64748b' }}>1</td>
+              <td style={{ ...tdStyle }}>
+                <div style={{ fontWeight: 600, fontSize: 12 }}>{po.sku_name || '—'}</div>
+                {po.notes && <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>{po.notes}</div>}
+              </td>
+              <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 700 }}>{qty.toLocaleString('en-IN')}</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>
+                {hasPrice ? fmtINR(unitPrice) : <span style={{ color: '#f59e0b', fontSize: 10 }}>From DB</span>}
+              </td>
+              <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700 }}>
+                {hasPrice ? fmtINR(subtotal) : '—'}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* ── Totals ── */}
+      {hasPrice ? (
+        <div style={{ background: '#f8fafc', borderTop: '1px solid #e2e8f0', padding: '10px 20px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+            <div style={{ display: 'flex', gap: 48, fontSize: 11, color: '#475569' }}>
+              <span>Subtotal</span><span style={{ minWidth: 90, textAlign: 'right' }}>{fmtINR(subtotal)}</span>
+            </div>
+            <div style={{ display: 'flex', gap: 48, fontSize: 11, color: '#475569' }}>
+              <span>IGST @ 18%</span><span style={{ minWidth: 90, textAlign: 'right' }}>{fmtINR(gst)}</span>
+            </div>
+            <div style={{ display: 'flex', gap: 48, fontSize: 13, fontWeight: 800, color: '#1e3a5f', borderTop: '2px solid #1e3a5f', paddingTop: 6, marginTop: 2 }}>
+              <span>GRAND TOTAL</span><span style={{ minWidth: 90, textAlign: 'right' }}>{fmtINR(grandTotal)}</span>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div style={{ background: '#fffbeb', borderTop: '1px solid #fde68a', padding: '8px 20px', fontSize: 10, color: '#92400e' }}>
+          ℹ️ Unit price will be auto-fetched from your product database. Final value calculated on confirmation.
+        </div>
+      )}
+
+      {/* ── Authorisation Footer ── */}
+      <div style={{ background: '#f1f5f9', borderTop: '1px solid #e2e8f0', padding: '12px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ fontSize: 10, color: '#64748b', maxWidth: 320 }}>
+          <strong style={{ color: '#475569' }}>Authorisation required</strong> — Review all details above.
+          By approving, you confirm this PO is accurate and authorised for procurement.
+        </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button
+            onClick={() => onCancel()}
+            disabled={busy}
+            style={{
+              padding: '8px 16px', background: '#fff', border: '1.5px solid #cbd5e1',
+              borderRadius: 7, fontSize: 12, cursor: 'pointer', color: '#64748b', fontWeight: 600,
+            }}
+          >
+            ✕ Reject PO
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={busy}
+            style={{
+              padding: '8px 20px', background: busy ? '#9ca3af' : '#1e3a5f',
+              border: 'none', borderRadius: 7, fontSize: 12,
+              cursor: busy ? 'not-allowed' : 'pointer',
+              color: '#fff', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8,
+            }}
+          >
+            {busy ? (
+              <>
+                <span style={{ width: 12, height: 12, border: '2px solid rgba(255,255,255,0.35)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />
+                Issuing PO…
+              </>
+            ) : '✓ Approve & Issue PO'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Single Message ───────────────────────────────────────────────────────────
+function AiMessage({ msg, isStreaming, onFollowUp, onConfirmPO, onCancelPO }) {
+  const [copied, setCopied] = useState(false);
+  const [reaction, setReaction] = useState(null);
+
+  const modeInfo   = MODES.find((m) => m.id === msg.mode) || MODES[0];
+  const toolChips  = parseToolChips(msg.tools);
+  const rcaFlag    = msg.rca_applied;
   const showFooter = !isStreaming;
 
   const handleCopy = () => {
@@ -233,6 +554,10 @@ function AiMessage({ msg, isStreaming, onFollowUp }) {
     ? new Date(msg.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
     : '';
 
+  const pendingActions = (msg.actions || []).filter(
+    (a) => a.type === 'create_po',
+  );
+
   return (
     <div className="iq-msg ai">
       <div className="iq-msg-wrap">
@@ -244,6 +569,11 @@ function AiMessage({ msg, isStreaming, onFollowUp }) {
               {modeInfo.icon} {modeInfo.label.toUpperCase()}
             </span>
             {rcaFlag && <span className="iq-chip rca">🔎 RCA</span>}
+            {pendingActions.length > 0 && !isStreaming && (
+              <span className="iq-chip" style={{ background: '#ede9fe', color: '#6d28d9', border: '1px solid #c4b5fd' }}>
+                📋 Create PO
+              </span>
+            )}
             {toolChips.map((c) => (
               <span key={c.key} className={`iq-chip ${c.cls}`}>
                 {c.emoji} {c.label}
@@ -255,6 +585,16 @@ function AiMessage({ msg, isStreaming, onFollowUp }) {
           <div className="iq-ai-bubble">
             <MarkdownRenderer text={msg.content} />
             {isStreaming && <span className="iq-stream-cursor" />}
+
+            {/* PO Confirmation Cards */}
+            {!isStreaming && pendingActions.map((action, idx) => (
+              <POConfirmCard
+                key={idx}
+                action={action}
+                onConfirm={(poData) => onConfirmPO(msg.id, idx, poData)}
+                onCancel={() => onCancelPO(msg.id, idx)}
+              />
+            ))}
 
             {showFooter && (
               <>
@@ -321,27 +661,27 @@ export default function AIAssistant({ pendingQuery, onPendingQueryConsumed }) {
   const [streamingId, setStreamingId] = useState(null);
   const [error, setError]         = useState(null);
 
-  const messagesEndRef = useRef(null);
-  const textareaRef    = useRef(null);
-  const abortRef       = useRef(null);
+  const messagesEndRef  = useRef(null);
+  const textareaRef     = useRef(null);
+  const abortRef        = useRef(null);
+  const sendMessageRef  = useRef(null);  // stable ref so effects can call latest sendMessage
 
-  // Auto-scroll to bottom
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
   useEffect(() => { scrollToBottom(); }, [messages, scrollToBottom]);
 
-  // Consume pending query from parent (e.g. clicking a suggestion card)
+  // Consume pending query from parent — auto-send to chatbot
   useEffect(() => {
     if (pendingQuery) {
-      setInput(pendingQuery);
       onPendingQueryConsumed?.();
-      setTimeout(() => textareaRef.current?.focus(), 100);
+      // Use ref so we always call the latest sendMessage (avoids stale closure)
+      setTimeout(() => sendMessageRef.current?.(pendingQuery), 80);
     }
   }, [pendingQuery, onPendingQueryConsumed]);
 
-  // Keyboard shortcuts for mode switching
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKey = (e) => {
       if (e.target.tagName === 'TEXTAREA') return;
@@ -353,13 +693,68 @@ export default function AIAssistant({ pendingQuery, onPendingQueryConsumed }) {
     return () => window.removeEventListener('keydown', handleKey);
   }, []);
 
-  // Auto-grow textarea
   const handleInputChange = (e) => {
     const el = e.target;
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
     setInput(el.value);
   };
+
+  // ── PO Action Handlers ────────────────────────────────────
+  const handleConfirmPO = useCallback(async (msgId, actionIdx, poData) => {
+    // Set action to loading
+    setMessages((prev) => prev.map((m) => {
+      if (m.id !== msgId) return m;
+      const actions = (m.actions || []).map((a, i) =>
+        i === actionIdx ? { ...a, status: 'loading' } : a,
+      );
+      return { ...m, actions };
+    }));
+
+    try {
+      const res = await fetch('/api/po', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          supplier_name: poData.supplier_name,
+          sku_name: poData.sku_name,
+          quantity: poData.quantity,
+          unit_price: poData.unit_price || null,
+          expected_date: poData.expected_date || null,
+          notes: poData.notes || null,
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        throw new Error(result.detail || result.error || `HTTP ${res.status}`);
+      }
+      setMessages((prev) => prev.map((m) => {
+        if (m.id !== msgId) return m;
+        const actions = (m.actions || []).map((a, i) =>
+          i === actionIdx ? { ...a, status: 'success', result } : a,
+        );
+        return { ...m, actions };
+      }));
+    } catch (err) {
+      setMessages((prev) => prev.map((m) => {
+        if (m.id !== msgId) return m;
+        const actions = (m.actions || []).map((a, i) =>
+          i === actionIdx ? { ...a, status: 'error', error: err.message } : a,
+        );
+        return { ...m, actions };
+      }));
+    }
+  }, []);
+
+  const handleCancelPO = useCallback((msgId, actionIdx) => {
+    setMessages((prev) => prev.map((m) => {
+      if (m.id !== msgId) return m;
+      const actions = (m.actions || []).map((a, i) =>
+        i === actionIdx ? { ...a, status: 'cancelled' } : a,
+      );
+      return { ...m, actions };
+    }));
+  }, []);
 
   // ── Send message ─────────────────────────────────────────
   const sendMessage = useCallback(async (query) => {
@@ -370,6 +765,12 @@ export default function AIAssistant({ pendingQuery, onPendingQueryConsumed }) {
     const userMsgId = `u-${Date.now()}`;
     const aiMsgId   = `a-${Date.now() + 1}`;
 
+    // Build conversation history for the API (last 16 messages, completed only)
+    const history = messages
+      .filter((m) => m.content && m.content.length > 0)
+      .slice(-16)
+      .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }));
+
     const userMsg = {
       id: userMsgId, role: 'user', mode,
       content: text, timestamp: new Date().toISOString(),
@@ -378,14 +779,13 @@ export default function AIAssistant({ pendingQuery, onPendingQueryConsumed }) {
       id: aiMsgId, role: 'ai', mode,
       content: '', tools: [], rca_applied: false,
       follow_ups: [], model: null, data_source: null,
+      actions: [],
       timestamp: new Date().toISOString(),
     };
 
     setMessages((prev) => [...prev, userMsg, aiMsg]);
     setInput('');
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-    }
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setStreaming(true);
     setStreamingId(aiMsgId);
 
@@ -396,7 +796,7 @@ export default function AIAssistant({ pendingQuery, onPendingQueryConsumed }) {
       const resp = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, mode }),
+        body: JSON.stringify({ message: text, mode, history }),
         signal: controller.signal,
       });
 
@@ -428,7 +828,7 @@ export default function AIAssistant({ pendingQuery, onPendingQueryConsumed }) {
             setMessages((prev) =>
               prev.map((m) => {
                 if (m.id !== aiMsgId) return m;
-                // orchestrator emits: meta | token | done | error
+
                 if (evt.type === 'token') {
                   return { ...m, content: m.content + (evt.content || '') };
                 }
@@ -443,6 +843,17 @@ export default function AIAssistant({ pendingQuery, onPendingQueryConsumed }) {
                 }
                 if (evt.type === 'done') {
                   return { ...m, follow_ups: evt.follow_ups ?? m.follow_ups };
+                }
+                if (evt.type === 'action' && evt.action_type === 'create_po') {
+                  // Add PO creation action card with 'pending' status
+                  const newAction = {
+                    type: 'create_po',
+                    po_data: evt.po_data || {},
+                    status: 'pending',
+                    result: null,
+                    error: null,
+                  };
+                  return { ...m, actions: [...(m.actions || []), newAction] };
                 }
                 if (evt.type === 'error') {
                   return { ...m, content: m.content || `Error: ${evt.message}` };
@@ -464,9 +875,11 @@ export default function AIAssistant({ pendingQuery, onPendingQueryConsumed }) {
       setStreaming(false);
       setStreamingId(null);
     }
-  }, [input, mode, streaming]);
+  }, [input, mode, streaming, messages]);
 
-  // Keyboard submit
+  // Keep ref current so pendingQuery effect always calls the latest sendMessage
+  useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
+
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -474,13 +887,10 @@ export default function AIAssistant({ pendingQuery, onPendingQueryConsumed }) {
     }
   };
 
-  // Follow-up click
   const handleFollowUp = useCallback((q) => {
-    setInput(q);
-    setTimeout(() => textareaRef.current?.focus(), 50);
+    setTimeout(() => sendMessageRef.current?.(q), 50);
   }, []);
 
-  // New chat
   const handleNewChat = () => {
     abortRef.current?.abort();
     setMessages([]);
@@ -493,7 +903,6 @@ export default function AIAssistant({ pendingQuery, onPendingQueryConsumed }) {
   const canSend = input.trim().length > 0 && !streaming;
   const activeModeInfo = MODES.find((m) => m.id === mode);
 
-  // ── Render ────────────────────────────────────────────────
   return (
     <div className="iq-chat-view">
       {/* Header */}
@@ -502,7 +911,7 @@ export default function AIAssistant({ pendingQuery, onPendingQueryConsumed }) {
           <div className="iq-header-logo"><IconSpark /></div>
           <div>
             <div className="iq-header-title">InvenIQ AI Assistant</div>
-            <div className="iq-header-sub">GPT-4o · MCP Tools · RCA Engine</div>
+            <div className="iq-header-sub">GPT-4o · MCP Tools · RCA Engine · Function Calling</div>
           </div>
         </div>
         <div className="iq-header-right">
@@ -542,21 +951,21 @@ export default function AIAssistant({ pendingQuery, onPendingQueryConsumed }) {
       <div className="iq-chat-container">
         <div className="iq-messages">
           {messages.length === 0 ? (
-            /* Empty State */
             <div className="iq-empty">
               <div className="iq-empty-hero">
                 <div className="iq-empty-icon"><IconSpark /></div>
                 <div className="iq-empty-title">Ask anything about your inventory</div>
                 <div className="iq-empty-sub">
                   InvenIQ AI analyses real-time stock, orders, finance & logistics data to give you
-                  precise, actionable answers.
+                  precise, actionable answers. Use <strong>Act</strong> mode to get RCA templates
+                  and create purchase orders directly from chat.
                 </div>
                 <div className="iq-empty-pills">
                   {[
                     { label: '📦 Stock Intelligence', color: '#3b82f6' },
+                    { label: '📋 PO & GRN', color: '#7c3aed' },
                     { label: '💰 Finance Insights', color: '#16a34a' },
-                    { label: '🚚 Logistics Optimization', color: '#06b6d4' },
-                    { label: '📈 Demand Forecast', color: '#d97706' },
+                    { label: '⚡ Act + RCA Templates', color: '#d97706' },
                   ].map((p) => (
                     <span key={p.label} className="iq-empty-pill">
                       <span className="iq-empty-pill-dot" style={{ background: p.color }} />
@@ -586,7 +995,6 @@ export default function AIAssistant({ pendingQuery, onPendingQueryConsumed }) {
               </div>
             </div>
           ) : (
-            /* Messages */
             messages.map((msg) =>
               msg.role === 'user' ? (
                 <div key={msg.id} className="iq-msg user">
@@ -609,24 +1017,35 @@ export default function AIAssistant({ pendingQuery, onPendingQueryConsumed }) {
                   msg={msg}
                   isStreaming={msg.id === streamingId}
                   onFollowUp={handleFollowUp}
+                  onConfirmPO={handleConfirmPO}
+                  onCancelPO={handleCancelPO}
                 />
               )
             )
           )}
 
-          {/* Typing Indicator (before first token arrives) */}
+          {/* Typing Indicator — mode-aware with tool feedback */}
           {streaming && messages[messages.length - 1]?.role === 'ai' &&
-           messages[messages.length - 1]?.content === '' && (
-            <div className="iq-typing">
-              <div className="iq-avatar ai"><IconBot /></div>
-              <div className="iq-typing-bubble">
-                <div className="iq-typing-dots">
-                  <span /><span /><span />
+           messages[messages.length - 1]?.content === '' && (() => {
+            const lastMsg = messages[messages.length - 1];
+            const hasTools = lastMsg?.tools?.length > 0;
+            const typingLabel = lastMsg?.mode === 'explain'
+              ? (hasTools ? '🔍 Running root cause analysis…' : '🔍 Analysing root causes…')
+              : lastMsg?.mode === 'act'
+              ? (hasTools ? '⚡ Building action plan + RCA…' : '⚡ Preparing action plan…')
+              : (hasTools ? `📦 Querying ${lastMsg.tools[0]?.replace('query_', '')} data…` : '🔎 Checking your inventory data…');
+            return (
+              <div className="iq-typing">
+                <div className="iq-avatar ai"><IconBot /></div>
+                <div className="iq-typing-bubble">
+                  <div className="iq-typing-dots">
+                    <span /><span /><span />
+                  </div>
+                  <div className="iq-typing-label">{typingLabel}</div>
                 </div>
-                <div className="iq-typing-label">Analysing your data…</div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           <div ref={messagesEndRef} />
         </div>
@@ -649,7 +1068,11 @@ export default function AIAssistant({ pendingQuery, onPendingQueryConsumed }) {
               ref={textareaRef}
               className="iq-textarea"
               rows={1}
-              placeholder={`${activeModeInfo?.icon} ${activeModeInfo?.label} mode — ask anything about your business…`}
+              placeholder={
+                mode === 'act'
+                  ? '⚡ Act mode — ask for action plans, RCA templates, or create a new PO…'
+                  : `${activeModeInfo?.icon} ${activeModeInfo?.label} mode — ask anything about your business…`
+              }
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
@@ -670,7 +1093,7 @@ export default function AIAssistant({ pendingQuery, onPendingQueryConsumed }) {
               <span><kbd>Shift+Enter</kbd> New line</span>
               <span><kbd>1/2/3</kbd> Switch mode</span>
             </div>
-            <span>Powered by GPT-4o · Inventory context-aware</span>
+            <span>Powered by GPT-4o · Knowledge Base · Proactive Insights · RCA Templates</span>
           </div>
         </div>
       </div>

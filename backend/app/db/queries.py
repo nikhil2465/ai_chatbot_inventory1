@@ -309,6 +309,195 @@ async def query_freight(pool: aiomysql.Pool, query: str = "") -> dict:
     }
 
 
+async def query_sales(pool: aiomysql.Pool, query: str = "") -> dict:
+    """Sales revenue trend, margin by SKU, day-of-week patterns."""
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            # Monthly revenue last 12 months
+            await cur.execute("""
+                SELECT DATE_FORMAT(order_date, '%b') AS month,
+                       DATE_FORMAT(order_date, '%Y-%m') AS ym,
+                       SUM(total_value) AS revenue, COUNT(*) AS orders
+                FROM customer_orders
+                WHERE order_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+                  AND status != 'CANCELLED'
+                GROUP BY DATE_FORMAT(order_date, '%Y-%m'), DATE_FORMAT(order_date, '%b')
+                ORDER BY MIN(order_date) ASC
+                LIMIT 12
+            """)
+            monthly_rows = await cur.fetchall()
+            monthly = [
+                {"month": r["month"], "revenue": round(float(r["revenue"] or 0) / 100000, 2), "orders": int(r["orders"])}
+                for r in monthly_rows
+            ]
+
+            # MTD KPIs
+            await cur.execute("""
+                SELECT SUM(total_value) AS revenue_mtd, COUNT(*) AS orders_mtd,
+                       AVG(total_value) AS avg_order_value
+                FROM customer_orders
+                WHERE DATE_FORMAT(order_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')
+                  AND status != 'CANCELLED'
+            """)
+            mtd = await cur.fetchone()
+
+            # Avg revenue by day of week (last 90 days)
+            await cur.execute("""
+                SELECT LEFT(DAYNAME(order_date), 3) AS day,
+                       DAYOFWEEK(order_date) AS dow_num,
+                       AVG(total_value) AS avg_rev
+                FROM customer_orders
+                WHERE order_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+                  AND status != 'CANCELLED'
+                GROUP BY DAYOFWEEK(order_date), LEFT(DAYNAME(order_date), 3)
+                ORDER BY DAYOFWEEK(order_date)
+            """)
+            dow_rows = await cur.fetchall()
+            day_of_week = [{"day": r["day"], "avg": round(float(r["avg_rev"] or 0) / 1000, 1)} for r in dow_rows]
+
+    rev_mtd = float(mtd["revenue_mtd"] or 0)
+    orders_mtd = int(mtd["orders_mtd"] or 0)
+    return {
+        "revenue_mtd": f"Rs.{rev_mtd/100000:.1f}L",
+        "orders_mtd": orders_mtd,
+        "avg_order_value": f"Rs.{float(mtd['avg_order_value'] or 0):,.0f}",
+        "monthly_revenue": monthly,
+        "day_of_week": day_of_week,
+        "data_source": "mysql",
+    }
+
+
+async def query_inward(pool: aiomysql.Pool, query: str = "") -> dict:
+    """Inward/outward stock movements, GRN summary, shrinkage."""
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            # Today's movements
+            await cur.execute("""
+                SELECT sm.movement_type,
+                       COUNT(*) AS cnt,
+                       COALESCE(SUM(sm.quantity), 0) AS qty,
+                       COALESCE(SUM(sm.quantity * p.buy_price), 0) AS value
+                FROM stock_movements sm
+                LEFT JOIN products p ON sm.product_id = p.product_id
+                WHERE DATE(sm.moved_at) = CURDATE()
+                GROUP BY sm.movement_type
+            """)
+            mvt_rows = await cur.fetchall()
+            movements = {r["movement_type"]: {"cnt": int(r["cnt"]), "qty": int(r["qty"]), "value": float(r["value"])} for r in mvt_rows}
+
+            # Recent GRN
+            await cur.execute("""
+                SELECT g.grn_number, s.supplier_name, g.grn_value, g.match_status,
+                       g.received_date, g.notes
+                FROM grn g
+                JOIN suppliers s ON g.supplier_id = s.supplier_id
+                ORDER BY g.received_date DESC
+                LIMIT 8
+            """)
+            grn_rows = await cur.fetchall()
+            recent_grn = [
+                {
+                    "grn": r["grn_number"], "supplier": r["supplier_name"],
+                    "value": f"Rs.{float(r['grn_value'] or 0):,.0f}",
+                    "status": r["match_status"], "date": str(r["received_date"]),
+                    "notes": r["notes"] or "",
+                }
+                for r in grn_rows
+            ]
+
+            # Shrinkage MTD (ADJUSTMENT type movements)
+            await cur.execute("""
+                SELECT COALESCE(SUM(sm.quantity * p.buy_price), 0) AS shrink_val
+                FROM stock_movements sm
+                LEFT JOIN products p ON sm.product_id = p.product_id
+                WHERE sm.movement_type = 'ADJUSTMENT'
+                  AND DATE_FORMAT(sm.moved_at, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')
+            """)
+            shrink_row = await cur.fetchone()
+
+    inward = movements.get("IN", {})
+    outward = movements.get("OUT", {})
+    shrink = float((shrink_row or {}).get("shrink_val") or 0)
+    return {
+        "inward_today": f"Rs.{inward.get('value', 0)/100000:.1f}L",
+        "outward_today": f"Rs.{outward.get('value', 0)/100000:.1f}L",
+        "inward_count": inward.get("cnt", 0),
+        "outward_count": outward.get("cnt", 0),
+        "inward_qty": inward.get("qty", 0),
+        "outward_qty": outward.get("qty", 0),
+        "shrinkage_mtd": f"Rs.{shrink/100000:.2f}L",
+        "recent_grn": recent_grn,
+        "data_source": "mysql",
+    }
+
+
+async def query_customer_list(pool: aiomysql.Pool, query: str = "") -> dict:
+    """Full customer list with AI health scoring, outstanding, DSO."""
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("""
+                SELECT c.customer_id, c.customer_name, c.segment,
+                       c.avg_monthly_value, c.last_order_date, c.risk_status,
+                       DATEDIFF(CURDATE(), c.last_order_date) AS days_since,
+                       COALESCE(SUM(i.outstanding), 0) AS outstanding_amount
+                FROM customers c
+                LEFT JOIN invoices i ON c.customer_id = i.customer_id AND i.outstanding > 0
+                WHERE c.is_active = 1
+                GROUP BY c.customer_id
+                ORDER BY c.avg_monthly_value DESC
+                LIMIT 30
+            """)
+            rows = await cur.fetchall()
+            customers = []
+            for r in rows:
+                monthly = float(r["avg_monthly_value"] or 0)
+                outstanding = float(r["outstanding_amount"] or 0)
+                days = int(r["days_since"] or 0)
+                risk = (r["risk_status"] or "LOW").upper()
+                # AI score: 100 base, deduct for risk/silence/overdue
+                score = 100
+                if risk == "HIGH":   score -= 35
+                elif risk == "MEDIUM": score -= 20
+                if days > 60:        score -= 20
+                elif days > 30:      score -= 10
+                if monthly > 0 and outstanding > monthly * 2: score -= 15
+                score = max(10, score)
+                customers.append({
+                    "name": r["customer_name"],
+                    "segment": r["segment"] or "Unknown",
+                    "monthly_value": f"Rs.{monthly/100000:.1f}L",
+                    "outstanding": f"Rs.{outstanding/100000:.1f}L",
+                    "days_since_order": days,
+                    "risk": risk,
+                    "score": score,
+                })
+
+            # Aggregates
+            await cur.execute("SELECT COUNT(*) AS cnt FROM customers WHERE is_active=1")
+            total = (await cur.fetchone())["cnt"]
+            await cur.execute("""
+                SELECT COUNT(*) AS cnt FROM customers
+                WHERE risk_status IN ('MEDIUM','HIGH') AND is_active=1
+            """)
+            at_risk_cnt = (await cur.fetchone())["cnt"]
+            await cur.execute("SELECT COALESCE(SUM(outstanding),0) AS tot FROM invoices WHERE outstanding>0")
+            total_out = float((await cur.fetchone())["tot"] or 0)
+
+    return {
+        "total_customers": int(total),
+        "at_risk_count": int(at_risk_cnt),
+        "total_outstanding": f"Rs.{total_out/100000:.1f}L",
+        "customers": customers,
+        "data_source": "mysql",
+    }
+
+
+async def query_po_grn(pool: aiomysql.Pool, query: str = "") -> dict:
+    """PO & GRN status for the chatbot tool."""
+    from app.db.po_grn_queries import get_po_grn_dashboard
+    return await get_po_grn_dashboard(pool)
+
+
 async def query_demand(pool: aiomysql.Pool, query: str = "") -> dict:
     async with pool.acquire() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cur:

@@ -555,6 +555,10 @@ button, input, textarea, select {
 .iq-chip.tool-demand  { background: #fff1f2; color: #9f1239; border-color: #fecdd3; }
 .iq-chip.tool-freight { background: #ecfeff; color: #155e75; border-color: #67e8f9; }
 .iq-chip.tool-email   { background: #f0f9ff; color: #0c4a6e; border-color: #7dd3fc; }
+.iq-chip.tool-sales   { background: #f0fdf4; color: #14532d; border-color: #86efac; }
+.iq-chip.tool-inward  { background: #fafaf9; color: #44403c; border-color: #d6d3d1; }
+.iq-chip.tool-knowledge { background: #ecfeff; color: #164e63; border-color: #22d3ee; }
+.iq-chip.tool-insights  { background: #f0fdf4; color: #14532d; border-color: #4ade80; }
 
 .iq-ai-bubble {
   background: var(--iq-surface);
@@ -961,11 +965,78 @@ kbd {
   border-top: 2px solid var(--iq-border); 
   margin: 14px 0; 
 }
-.iq-md .spacer { 
-  height: 6px; 
+.iq-md .spacer {
+  height: 6px;
 }
 
-/* ── Utility Classes ──────────────────────────────────────── */
+/* ── Markdown Table (Professional Data Tables) ───────────── */
+.iq-md-table-wrap {
+  overflow-x: auto;
+  margin: 12px 0;
+  border-radius: var(--iq-radius-sm);
+  border: 1.5px solid var(--iq-border);
+  box-shadow: var(--iq-shadow-sm);
+}
+.iq-md-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  font-family: var(--font-family-base);
+  background: var(--iq-surface);
+}
+.iq-md-table thead tr {
+  background: var(--iq-navy);
+}
+.iq-md-table thead th {
+  padding: 8px 14px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #e2e8f0;
+  white-space: nowrap;
+  border-right: 1px solid rgba(255,255,255,0.08);
+}
+.iq-md-table thead th:last-child {
+  border-right: none;
+}
+.iq-md-table tbody tr {
+  border-bottom: 1px solid var(--iq-border-soft);
+  transition: background 0.12s ease;
+}
+.iq-md-table tbody tr:last-child {
+  border-bottom: none;
+}
+.iq-md-table tbody tr:hover {
+  background: var(--iq-bg);
+}
+.iq-md-table tbody td {
+  padding: 7px 14px;
+  color: var(--iq-text);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  vertical-align: middle;
+  border-right: 1px solid var(--iq-border-soft);
+}
+.iq-md-table tbody td:last-child {
+  border-right: none;
+}
+.iq-md-table tbody td strong {
+  color: var(--iq-navy);
+  font-weight: 700;
+}
+.iq-md-table tbody td code {
+  font-size: 10px;
+  padding: 2px 6px;
+  background: var(--iq-bg);
+  border: 1px solid var(--iq-border);
+  border-radius: 4px;
+  color: #7c3aed;
+  font-family: var(--font-family-mono);
+}
+
+
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(12px); }
   to   { opacity: 1; transform: translateY(0); }
