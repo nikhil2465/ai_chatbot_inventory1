@@ -227,6 +227,17 @@ End with:
 - One emoji per insight title maximum
 """
 
+DISCOUNT_SYSTEM_ADDENDUM = """
+
+## Discount Intelligence Mode
+You are also analysing distributor discount data from this business. When discount tool data is present, augment every response with:
+- Explain the specific rule tier that triggered and why it exists (e.g. "Contractor ≥500 units slab rewards bulk buyers to lock in volume")
+- Flag margin risk explicitly: discounts >25% get ⚠️ caution; discounts that breach the floor get ⛔
+- Compare to segment averages where data is present (e.g. "Contractors typically get 6.5%, this is 8% — above average, watch margin")
+- Give one concrete recommendation (raise quantity to hit next slab, apply category override, etc.)
+- All ₹ in Indian formatting (lakhs/crores). Never mention USD.
+"""
+
 SYSTEM_BASE = """You are StockSense AI — an expert AI advisor for inventory dealers in India.
 You are live-connected to a plywood dealer's DMS (Dealer Management System) in Bangalore.
 
@@ -373,6 +384,8 @@ def _build_messages(
     full_context = "\n\n".join(context_sections)
 
     system_prompt = SYSTEM_BASE + MODE_INSTRUCTIONS.get(mode, MODE_INSTRUCTIONS["ask"])
+    if "discount" in tool_data:
+        system_prompt += DISCOUNT_SYSTEM_ADDENDUM
     messages = [{"role": "system", "content": system_prompt}]
 
     if history:
@@ -537,7 +550,10 @@ async def process_query_stream(
         # Gather data from all tools for a comprehensive analysis
         all_tools = ["stock", "finance", "customer", "supplier", "order", "demand", "freight", "po_grn"]
         tool_data_i = await gather_tool_data(all_tools, query)
-        insights_list = generate_proactive_insights(tool_data_i)
+        try:
+            insights_list = generate_proactive_insights(tool_data_i)
+        except Exception:
+            insights_list = []
         insights_ctx = format_insights_context(insights_list)
 
         yield {
@@ -596,18 +612,27 @@ async def process_query_stream(
     tool_data = await gather_tool_data(selected_tools, query)
 
     # Step 3: RCA (explain mode or 'why' words)
-    rca_performed, rca_context = await _run_rca_if_needed(mode, query, tool_data)
+    try:
+        rca_performed, rca_context = await _run_rca_if_needed(mode, query, tool_data)
+    except Exception:
+        rca_performed, rca_context = False, ""
 
     # Step 3b: RCA templates (act mode — full structured framework)
     rca_template_context = ""
     if mode == "act":
-        rca_template_context = get_act_rca_templates(query, tool_data)
+        try:
+            rca_template_context = get_act_rca_templates(query, tool_data)
+        except Exception:
+            rca_template_context = ""
 
     # Step 3c: Inline RCA tip (ask/explain modes — compact single-template insight)
     # This ensures RCA insights surface in ALL modes, not just Act mode.
     inline_rca = ""
     if mode in ("ask", "explain") and not rca_context:
-        inline_rca = get_inline_rca_tip(query, tool_data, mode)
+        try:
+            inline_rca = get_inline_rca_tip(query, tool_data, mode)
+        except Exception:
+            inline_rca = ""
     if inline_rca:
         rca_performed = True  # flag frontend to show the RCA chip
 
@@ -780,7 +805,10 @@ async def process_query(
     if is_insights_query(query):
         all_tools = ["stock", "finance", "customer", "supplier", "order", "demand", "freight", "po_grn"]
         tool_data_i = await gather_tool_data(all_tools, query)
-        insights_list = generate_proactive_insights(tool_data_i)
+        try:
+            insights_list = generate_proactive_insights(tool_data_i)
+        except Exception:
+            insights_list = []
         insights_ctx = format_insights_context(insights_list)
         messages_i = [{"role": "system", "content": SYSTEM_INSIGHTS}]
         messages_i.append({"role": "user", "content": f"**Request:** {query}\n\n--- Pre-computed Insights ---\n{insights_ctx}"})
@@ -800,8 +828,14 @@ async def process_query(
 
     selected_tools = select_tools(query, mode)
     tool_data = await gather_tool_data(selected_tools, query)
-    rca_performed, rca_context = await _run_rca_if_needed(mode, query, tool_data)
-    rca_template_context = get_act_rca_templates(query, tool_data) if mode == "act" else ""
+    try:
+        rca_performed, rca_context = await _run_rca_if_needed(mode, query, tool_data)
+    except Exception:
+        rca_performed, rca_context = False, ""
+    try:
+        rca_template_context = get_act_rca_templates(query, tool_data) if mode == "act" else ""
+    except Exception:
+        rca_template_context = ""
     messages = _build_messages(query, mode, tool_data, rca_context, history, rca_template_context)
 
     max_tokens = {"ask": 500, "explain": 1000, "act": 1000}.get(mode, 700)

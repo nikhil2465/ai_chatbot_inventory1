@@ -22,7 +22,9 @@ CREATE TABLE IF NOT EXISTS products (
     sku_code        VARCHAR(60)  NOT NULL UNIQUE,
     sku_name        VARCHAR(120) NOT NULL,
     brand           VARCHAR(80)  NOT NULL DEFAULT 'Generic',
-    category        ENUM('BWP Plywood','MR Plywood','Commercial','Laminate','Flexi') NOT NULL,
+    category        ENUM('BWP Plywood','MR Plywood','Commercial','Laminate','Flexi',
+                        'High Pressure Laminate','Compact Laminate','Acrylic',
+                        'Louvers','Operable Louvre System') NOT NULL,
     thickness_mm    DECIMAL(4,1),
     size_ft         VARCHAR(20)  DEFAULT '8x4',
     unit            VARCHAR(20)  DEFAULT 'sheet',
@@ -127,6 +129,31 @@ CREATE TABLE IF NOT EXISTS grn (
     notes           VARCHAR(255),
     FOREIGN KEY (po_id)        REFERENCES purchase_orders(po_id),
     FOREIGN KEY (supplier_id)  REFERENCES suppliers(supplier_id)
+);
+
+-- =============================================================================
+-- SUPPLIER QUOTATIONS
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS quotations (
+    quotation_id     INT AUTO_INCREMENT PRIMARY KEY,
+    product_id       INT           NOT NULL,
+    supplier_id      INT           NOT NULL,
+    quote_date       DATE          NOT NULL,
+    rate             DECIMAL(10,2) NOT NULL,
+    freight_cost     DECIMAL(8,2)  DEFAULT 0,
+    moq              INT           DEFAULT 1,
+    lead_time_days   INT           DEFAULT 7,
+    valid_till       DATE,
+    reliability_pct  DECIMAL(5,2)  DEFAULT 90.00,
+    notes            VARCHAR(255),
+    is_last_purchased TINYINT(1)   DEFAULT 0,
+    is_active        TINYINT(1)    DEFAULT 1,
+    created_at       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_product  (product_id),
+    INDEX idx_supplier (supplier_id),
+    FOREIGN KEY (product_id)  REFERENCES products(product_id),
+    FOREIGN KEY (supplier_id) REFERENCES suppliers(supplier_id)
 );
 
 -- =============================================================================

@@ -1,0 +1,419 @@
+"""
+Louvers & Laminates — Sales Orders, Distributor Claims, Customer Rebates API
+Covers HPL, Compact Laminate, Acrylic, Aluminium/PVC Louvers, Operable Louvre Systems.
+DB-first / mock-fallback pattern.
+"""
+import datetime
+import logging
+from typing import Optional
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
+router = APIRouter(tags=["Louvers & Laminates"])
+
+try:
+    from app.db.connection import get_pool
+    _DB_AVAILABLE = True
+except ImportError:
+    _DB_AVAILABLE = False
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /api/louvers  — full dashboard
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/louvers")
+async def get_louvers_dashboard():
+    return _mock_dashboard()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SALES ORDERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+VALID_ORDER_STATUSES = {"DRAFT","CONFIRMED","IN_PRODUCTION","DISPATCHED","DELIVERED","CANCELLED"}
+
+class CreateOrderRequest(BaseModel):
+    customer_name:  str
+    customer_type:  str
+    product_id:     int
+    product_name:   str
+    category:       str
+    quantity:       float = Field(gt=0)
+    unit:           str
+    sell_price:     float
+    buy_price:      float
+    supplier_id:    Optional[int]  = None
+    supplier_name:  Optional[str]  = None
+    delivery_date:  Optional[str]  = None
+    site_location:  Optional[str]  = None
+    notes:          Optional[str]  = None
+
+class OrderStatusUpdate(BaseModel):
+    status: str
+
+@router.post("/louvers/orders")
+async def create_order(req: CreateOrderRequest):
+    today     = datetime.date.today()
+    num       = f"LO-{today.strftime('%Y%m%d')}-{datetime.datetime.now().strftime('%H%M%S')}"
+    gross     = round(req.sell_price * req.quantity, 2)
+    cost      = round(req.buy_price  * req.quantity, 2)
+    margin    = round((gross - cost) / gross * 100, 2) if gross else 0
+    return {"success": True, "order_number": num,
+            "total_value": gross, "margin_pct": margin,
+            "valid_till": (today + datetime.timedelta(days=14)).isoformat(),
+            "demo_mode": True}
+
+@router.put("/louvers/orders/{order_id}/status")
+async def update_order_status(order_id: int, req: OrderStatusUpdate):
+    if req.status not in VALID_ORDER_STATUSES:
+        raise HTTPException(422, f"Status must be one of {VALID_ORDER_STATUSES}")
+    return {"success": True, "order_id": order_id, "status": req.status, "demo_mode": True}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DISTRIBUTOR CLAIMS
+# ─────────────────────────────────────────────────────────────────────────────
+
+VALID_CLAIM_STATUSES = {"DRAFT","SUBMITTED","UNDER_REVIEW","APPROVED","PARTIAL","REJECTED"}
+
+class CreateClaimRequest(BaseModel):
+    distributor_name: str
+    claim_type:       str   # PRICE_DIFF | DAMAGE | FREIGHT_EXCESS | PROMO_SUPPORT | SHORTAGE
+    product_name:     str
+    invoice_ref:      str
+    invoice_date:     str
+    quantity:         float = Field(gt=0)
+    unit:             str
+    claimed_rate:     float
+    approved_rate:    Optional[float] = None
+    amount_claimed:   float
+    notes:            Optional[str]  = None
+
+class ClaimStatusUpdate(BaseModel):
+    status:          str
+    approved_amount: Optional[float] = None
+    remarks:         Optional[str]   = None
+
+@router.post("/louvers/claims")
+async def create_claim(req: CreateClaimRequest):
+    today = datetime.date.today()
+    num   = f"DC-{today.strftime('%Y%m%d')}-{datetime.datetime.now().strftime('%H%M%S')}"
+    return {"success": True, "claim_number": num, "status": "SUBMITTED", "demo_mode": True}
+
+@router.put("/louvers/claims/{claim_id}/status")
+async def update_claim_status(claim_id: int, req: ClaimStatusUpdate):
+    if req.status not in VALID_CLAIM_STATUSES:
+        raise HTTPException(422, f"Status must be one of {VALID_CLAIM_STATUSES}")
+    return {"success": True, "claim_id": claim_id, "status": req.status,
+            "approved_amount": req.approved_amount, "demo_mode": True}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CUSTOMER REBATES
+# ─────────────────────────────────────────────────────────────────────────────
+
+VALID_REBATE_STATUSES = {"ACTIVE","ACHIEVED","PENDING_APPROVAL","PAID","LAPSED"}
+
+class CreateRebateRequest(BaseModel):
+    customer_name:  str
+    customer_type:  str
+    rebate_type:    str     # VOLUME | LOYALTY | PROJECT | ANNUAL_TARGET
+    category:       Optional[str] = None
+    target_amount:  float
+    rebate_pct:     float
+    period_start:   str
+    period_end:     str
+    notes:          Optional[str] = None
+
+class RebateStatusUpdate(BaseModel):
+    status:         str
+    actual_amount:  Optional[float] = None
+
+@router.post("/louvers/rebates")
+async def create_rebate(req: CreateRebateRequest):
+    today = datetime.date.today()
+    num   = f"RB-{today.strftime('%Y%m%d')}-{datetime.datetime.now().strftime('%H%M%S')}"
+    rebate_value = round(req.target_amount * req.rebate_pct / 100, 2)
+    return {"success": True, "rebate_number": num, "status": "ACTIVE",
+            "rebate_value": rebate_value, "demo_mode": True}
+
+@router.put("/louvers/rebates/{rebate_id}/status")
+async def update_rebate_status(rebate_id: int, req: RebateStatusUpdate):
+    if req.status not in VALID_REBATE_STATUSES:
+        raise HTTPException(422, f"Status must be one of {VALID_REBATE_STATUSES}")
+    return {"success": True, "rebate_id": rebate_id, "status": req.status, "demo_mode": True}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MOCK DATA
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _mock_dashboard() -> dict:
+    today = datetime.date.today()
+
+    # ── Products ──────────────────────────────────────────────────────────────
+    products = [
+        {"product_id": 19, "sku_code": "HPL-1MM-MATTE",
+         "sku_name": "HPL 1mm Matte (8×4)", "brand": "Greenlam",
+         "category": "High Pressure Laminate", "unit": "sheet",
+         "buy_price": 1080.0, "sell_price": 1300.0,
+         "margin_pct": round((1300-1080)/1300*100,1),
+         "applications": "Kitchen cabinets, wardrobes, office furniture",
+         "certifications": "IS 2046, FR grade available"},
+        {"product_id": 20, "sku_code": "HPL-COMPACT-6MM",
+         "sku_name": "HPL Compact 6mm (8×4)", "brand": "Greenlam",
+         "category": "Compact Laminate", "unit": "sheet",
+         "buy_price": 2980.0, "sell_price": 3600.0,
+         "margin_pct": round((3600-2980)/3600*100,1),
+         "applications": "Toilet cubicles, exterior cladding, wet areas",
+         "certifications": "Moisture resistant, fungal resistant"},
+        {"product_id": 21, "sku_code": "ACRYLIC-LAM-84",
+         "sku_name": "Acrylic Laminate (8×4)", "brand": "Generic",
+         "category": "Acrylic", "unit": "sheet",
+         "buy_price": 1720.0, "sell_price": 2100.0,
+         "margin_pct": round((2100-1720)/2100*100,1),
+         "applications": "High-gloss shutters, modular kitchens, retail displays",
+         "certifications": "Anti-scratch, UV resistant"},
+        {"product_id": 22, "sku_code": "LOUV-ALU-Z100-ANOD",
+         "sku_name": "Aluminium Z-Profile 100mm Anodized", "brand": "Generic",
+         "category": "Louvers", "unit": "RM",
+         "buy_price": 1720.0, "sell_price": 2100.0,
+         "margin_pct": round((2100-1720)/2100*100,1),
+         "applications": "Facade louvres, sun-shading, ventilation screens",
+         "certifications": "AA-25 anodizing, QUALICOAT certified"},
+        {"product_id": 23, "sku_code": "LOUV-ALU-Z80-PC",
+         "sku_name": "Aluminium Z-Profile 80mm Powder Coated", "brand": "Generic",
+         "category": "Louvers", "unit": "RM",
+         "buy_price": 1350.0, "sell_price": 1680.0,
+         "margin_pct": round((1680-1350)/1680*100,1),
+         "applications": "Interior partitions, commercial facades, car park screens",
+         "certifications": "PVDF coating, RAL colour range"},
+        {"product_id": 24, "sku_code": "LOUV-PVC-100",
+         "sku_name": "PVC Louver Blades 100mm", "brand": "Generic",
+         "category": "Louvers", "unit": "RM",
+         "buy_price": 390.0, "sell_price": 580.0,
+         "margin_pct": round((580-390)/580*100,1),
+         "applications": "Window blinds, residential facades, light screening",
+         "certifications": "UV stabilised, 10-yr warranty"},
+        {"product_id": 25, "sku_code": "LOUV-OPS-MTR",
+         "sku_name": "Operable Louvre System (Motorised)", "brand": "Generic",
+         "category": "Operable Louvre System", "unit": "SQM",
+         "buy_price": 9200.0, "sell_price": 12000.0,
+         "margin_pct": round((12000-9200)/12000*100,1),
+         "applications": "Rooftop pergolas, commercial atriums, architectural features",
+         "certifications": "Somfy motor, IP54, 5-yr system warranty"},
+    ]
+
+    # ── Supplier Quotes keyed by product_id ───────────────────────────────────
+    quotations = {
+        19: [
+            {"supplier_id":4,  "name":"Century Plyboards",     "city":"Kolkata",   "rate":1080,"freight":18,"moq":50, "lead":6, "rel":91,"rec":"PREFERRED","is_best":True},
+            {"supplier_id":7,  "name":"Merino Industries",      "city":"Kolkata",   "rate":1150,"freight":22,"moq":50, "lead":7, "rel":94,"rec":"GOOD",     "is_best":False},
+            {"supplier_id":8,  "name":"Action Tesa",            "city":"Ahmedabad", "rate": 990,"freight":25,"moq":100,"lead":8, "rel":82,"rec":"GOOD",     "is_best":False},
+            {"supplier_id":9,  "name":"Formica India",          "city":"Mumbai",    "rate":1225,"freight":20,"moq":30, "lead":5, "rel":97,"rec":"PREFERRED","is_best":False},
+        ],
+        20: [
+            {"supplier_id":4,  "name":"Century Plyboards",     "city":"Kolkata",   "rate":2980,"freight":28,"moq":25, "lead":6, "rel":91,"rec":"PREFERRED","is_best":True},
+            {"supplier_id":7,  "name":"Merino Industries",      "city":"Kolkata",   "rate":3200,"freight":35,"moq":20, "lead":7, "rel":94,"rec":"GOOD",     "is_best":False},
+            {"supplier_id":10, "name":"Stylam Industries",      "city":"Panchkula", "rate":2750,"freight":40,"moq":30, "lead":10,"rel":79,"rec":"REVIEW",   "is_best":False},
+        ],
+        21: [
+            {"supplier_id":11, "name":"Durian Industries",      "city":"Mumbai",    "rate":1720,"freight":22,"moq":20, "lead":7, "rel":88,"rec":"GOOD",     "is_best":True},
+            {"supplier_id":8,  "name":"Action Tesa",            "city":"Ahmedabad", "rate":1850,"freight":28,"moq":25, "lead":8, "rel":82,"rec":"GOOD",     "is_best":False},
+            {"supplier_id":7,  "name":"Merino Industries",      "city":"Kolkata",   "rate":1960,"freight":24,"moq":30, "lead":6, "rel":94,"rec":"GOOD",     "is_best":False},
+        ],
+        22: [
+            {"supplier_id":13, "name":"Supreme Profile India",  "city":"Bangalore", "rate":1720,"freight":38,"moq":75, "lead":8, "rel":85,"rec":"GOOD",     "is_best":True},
+            {"supplier_id":12, "name":"Alufit Systems",         "city":"Ahmedabad", "rate":1850,"freight":45,"moq":50, "lead":10,"rel":92,"rec":"GOOD",     "is_best":False},
+            {"supplier_id":15, "name":"Jindal Aluminium",       "city":"Delhi",     "rate":1790,"freight":35,"moq":60, "lead":9, "rel":95,"rec":"PREFERRED","is_best":False},
+            {"supplier_id":14, "name":"Alumax Profiles",        "city":"Surat",     "rate":1680,"freight":52,"moq":100,"lead":12,"rel":78,"rec":"REVIEW",   "is_best":False},
+        ],
+        23: [
+            {"supplier_id":16, "name":"Aluline India",          "city":"Pune",      "rate":1350,"freight":35,"moq":80, "lead":9, "rel":83,"rec":"GOOD",     "is_best":True},
+            {"supplier_id":12, "name":"Alufit Systems",         "city":"Ahmedabad", "rate":1480,"freight":40,"moq":50, "lead":12,"rel":92,"rec":"GOOD",     "is_best":False},
+            {"supplier_id":13, "name":"Supreme Profile India",  "city":"Bangalore", "rate":1290,"freight":42,"moq":100,"lead":10,"rel":85,"rec":"GOOD",     "is_best":False},
+        ],
+        24: [
+            {"supplier_id":13, "name":"Supreme Profile India",  "city":"Bangalore", "rate": 390,"freight":15,"moq":150,"lead":5, "rel":85,"rec":"GOOD",     "is_best":True},
+            {"supplier_id":17, "name":"Coltors India",          "city":"Chennai",   "rate": 420,"freight":18,"moq":100,"lead":6, "rel":80,"rec":"GOOD",     "is_best":False},
+            {"supplier_id":18, "name":"Polycab India",          "city":"Halol",     "rate": 445,"freight":12,"moq":100,"lead":4, "rel":90,"rec":"PREFERRED","is_best":False},
+        ],
+        25: [
+            {"supplier_id":19, "name":"Technal India",          "city":"Mumbai",    "rate":9200,"freight":180,"moq":8, "lead":18,"rel":96,"rec":"PREFERRED","is_best":True},
+            {"supplier_id":12, "name":"Alufit Systems",         "city":"Ahmedabad", "rate":8500,"freight":200,"moq":10,"lead":21,"rel":92,"rec":"GOOD",     "is_best":False},
+            {"supplier_id":20, "name":"YKK AP India",           "city":"Bangalore", "rate":10500,"freight":150,"moq":5,"lead":25,"rel":98,"rec":"PREFERRED","is_best":False},
+        ],
+    }
+
+    # ── Sales Orders ──────────────────────────────────────────────────────────
+    orders = [
+        {"order_id":1,"order_number":"LO-20260408-001","customer_name":"Skyline Architects",
+         "customer_type":"Architect","product_name":"Aluminium Z-Profile 100mm Anodized",
+         "category":"Louvers","quantity":280,"unit":"RM","sell_price":2100,"buy_price":1720,
+         "total_value":588000,"margin_pct":18.1,"supplier_name":"Supreme Profile India",
+         "delivery_date":(today+datetime.timedelta(days=4)).isoformat(),
+         "site_location":"Whitefield, Bangalore","status":"IN_PRODUCTION",
+         "notes":"Anodized silver — facade elevation project","created_at":"2026-04-08T09:15:00"},
+        {"order_id":2,"order_number":"LO-20260410-001","customer_name":"Metro Constructions",
+         "customer_type":"Contractor","product_name":"HPL Compact 6mm (8×4)",
+         "category":"Compact Laminate","quantity":45,"unit":"sheet","sell_price":3600,"buy_price":2980,
+         "total_value":162000,"margin_pct":17.2,"supplier_name":"Century Plyboards",
+         "delivery_date":(today+datetime.timedelta(days=2)).isoformat(),
+         "site_location":"Koramangala, Bangalore","status":"CONFIRMED",
+         "notes":"Toilet cubicle installation — 12 units","created_at":"2026-04-10T11:30:00"},
+        {"order_id":3,"order_number":"LO-20260412-001","customer_name":"Urban Living Interiors",
+         "customer_type":"Interior Firm","product_name":"HPL 1mm Matte (8×4)",
+         "category":"High Pressure Laminate","quantity":120,"unit":"sheet","sell_price":1300,"buy_price":1080,
+         "total_value":156000,"margin_pct":16.9,"supplier_name":"Century Plyboards",
+         "delivery_date":(today+datetime.timedelta(days=6)).isoformat(),
+         "site_location":"Indiranagar, Bangalore","status":"DISPATCHED",
+         "notes":"Matte grey + white tones for apartment fitout","created_at":"2026-04-12T14:00:00"},
+        {"order_id":4,"order_number":"LO-20260414-001","customer_name":"Prestige Developers",
+         "customer_type":"Developer","product_name":"Operable Louvre System (Motorised)",
+         "category":"Operable Louvre System","quantity":48,"unit":"SQM","sell_price":12000,"buy_price":9200,
+         "total_value":576000,"margin_pct":23.3,"supplier_name":"Technal India",
+         "delivery_date":(today+datetime.timedelta(days=16)).isoformat(),
+         "site_location":"Hebbal, Bangalore","status":"CONFIRMED",
+         "notes":"Rooftop pergola — Somfy motorised, RAL 7016","created_at":"2026-04-14T10:00:00"},
+        {"order_id":5,"order_number":"LO-20260416-001","customer_name":"Gloss Studio",
+         "customer_type":"Interior Firm","product_name":"Acrylic Laminate (8×4)",
+         "category":"Acrylic","quantity":35,"unit":"sheet","sell_price":2100,"buy_price":1720,
+         "total_value":73500,"margin_pct":18.1,"supplier_name":"Durian Industries",
+         "delivery_date":(today+datetime.timedelta(days=1)).isoformat(),
+         "site_location":"JP Nagar, Bangalore","status":"DELIVERED",
+         "notes":"High-gloss white for modular kitchen","created_at":"2026-04-16T16:45:00"},
+        {"order_id":6,"order_number":"LO-20260418-001","customer_name":"TechPark Infra",
+         "customer_type":"Developer","product_name":"PVC Louver Blades 100mm",
+         "category":"Louvers","quantity":450,"unit":"RM","sell_price":580,"buy_price":390,
+         "total_value":261000,"margin_pct":32.8,"supplier_name":"Supreme Profile India",
+         "delivery_date":(today+datetime.timedelta(days=3)).isoformat(),
+         "site_location":"Electronic City, Bangalore","status":"DRAFT",
+         "notes":"Car park screening — 3 levels","created_at":"2026-04-18T09:00:00"},
+        {"order_id":7,"order_number":"LO-20260420-001","customer_name":"Decor Workspace",
+         "customer_type":"Interior Firm","product_name":"Aluminium Z-Profile 80mm Powder Coated",
+         "category":"Louvers","quantity":160,"unit":"RM","sell_price":1680,"buy_price":1350,
+         "total_value":268800,"margin_pct":19.6,"supplier_name":"Aluline India",
+         "delivery_date":(today+datetime.timedelta(days=7)).isoformat(),
+         "site_location":"MG Road, Bangalore","status":"CONFIRMED",
+         "notes":"RAL 9005 jet black — office partition screens","created_at":"2026-04-20T13:30:00"},
+        {"order_id":8,"order_number":"LO-20260422-001","customer_name":"Horizon Hotels",
+         "customer_type":"Developer","product_name":"HPL Compact 6mm (8×4)",
+         "category":"Compact Laminate","quantity":80,"unit":"sheet","sell_price":3600,"buy_price":2980,
+         "total_value":288000,"margin_pct":17.2,"supplier_name":"Century Plyboards",
+         "delivery_date":(today+datetime.timedelta(days=9)).isoformat(),
+         "site_location":"Marathahalli, Bangalore","status":"DRAFT",
+         "notes":"Hotel washroom cubicles — 40 units","created_at":"2026-04-22T10:00:00"},
+    ]
+
+    # ── Distributor Claims ────────────────────────────────────────────────────
+    claims = [
+        {"claim_id":1,"claim_number":"DC-20260401-001","distributor_name":"Bangalore Building Supplies",
+         "claim_type":"PRICE_DIFF","product_name":"HPL 1mm Matte (8×4)","invoice_ref":"INV-2026-0312",
+         "invoice_date":"2026-03-12","quantity":80,"unit":"sheet",
+         "claimed_rate":220.0,"approved_rate":180.0,
+         "amount_claimed":17600,"amount_approved":14400,
+         "status":"APPROVED","remarks":"Approved at ₹180/sheet price diff (market movement)",
+         "created_at":"2026-04-01T10:00:00"},
+        {"claim_id":2,"claim_number":"DC-20260405-001","distributor_name":"South India Facades",
+         "claim_type":"DAMAGE","product_name":"Aluminium Z-Profile 100mm Anodized","invoice_ref":"INV-2026-0380",
+         "invoice_date":"2026-03-28","quantity":40,"unit":"RM",
+         "claimed_rate":2100.0,"approved_rate":None,
+         "amount_claimed":84000,"amount_approved":None,
+         "status":"UNDER_REVIEW","remarks":"Transit damage — insurance survey pending",
+         "created_at":"2026-04-05T14:30:00"},
+        {"claim_id":3,"claim_number":"DC-20260408-001","distributor_name":"Karnataka Laminates",
+         "claim_type":"FREIGHT_EXCESS","product_name":"HPL Compact 6mm (8×4)","invoice_ref":"INV-2026-0390",
+         "invoice_date":"2026-04-01","quantity":30,"unit":"sheet",
+         "claimed_rate":420.0,"approved_rate":350.0,
+         "amount_claimed":12600,"amount_approved":10500,
+         "status":"PARTIAL","remarks":"Approved at standard freight rate ₹350/sheet",
+         "created_at":"2026-04-08T09:15:00"},
+        {"claim_id":4,"claim_number":"DC-20260410-001","distributor_name":"Deccan Profile House",
+         "claim_type":"PROMO_SUPPORT","product_name":"Operable Louvre System (Motorised)","invoice_ref":"INV-2026-0401",
+         "invoice_date":"2026-04-05","quantity":12,"unit":"SQM",
+         "claimed_rate":1500.0,"approved_rate":1500.0,
+         "amount_claimed":18000,"amount_approved":18000,
+         "status":"APPROVED","remarks":"Q1 promotional display support — approved in full",
+         "created_at":"2026-04-10T11:00:00"},
+        {"claim_id":5,"claim_number":"DC-20260415-001","distributor_name":"Bangalore Building Supplies",
+         "claim_type":"SHORTAGE","product_name":"Acrylic Laminate (8×4)","invoice_ref":"INV-2026-0425",
+         "invoice_date":"2026-04-10","quantity":5,"unit":"sheet",
+         "claimed_rate":2100.0,"approved_rate":None,
+         "amount_claimed":10500,"amount_approved":None,
+         "status":"SUBMITTED","remarks":"5 sheets short in 40-sheet delivery — count verified",
+         "created_at":"2026-04-15T16:00:00"},
+        {"claim_id":6,"claim_number":"DC-20260418-001","distributor_name":"South India Facades",
+         "claim_type":"PRICE_DIFF","product_name":"Aluminium Z-Profile 80mm Powder Coated","invoice_ref":"INV-2026-0441",
+         "invoice_date":"2026-04-12","quantity":120,"unit":"RM",
+         "claimed_rate":180.0,"approved_rate":None,
+         "amount_claimed":21600,"amount_approved":None,
+         "status":"DRAFT","remarks":"Price revision not reflected in last invoice",
+         "created_at":"2026-04-18T10:30:00"},
+    ]
+
+    # ── Customer Rebates ──────────────────────────────────────────────────────
+    rebates = [
+        {"rebate_id":1,"rebate_number":"RB-20260101-001","customer_name":"Prestige Developers",
+         "customer_type":"Developer","rebate_type":"ANNUAL_TARGET","category":"All Louvers",
+         "target_amount":2000000,"actual_amount":2340000,"rebate_pct":3.0,
+         "rebate_value":70200,"period_start":"2026-01-01","period_end":"2026-03-31",
+         "status":"ACHIEVED","notes":"Exceeded Q1 target by 17% — full rebate triggered",
+         "created_at":"2026-01-01T00:00:00"},
+        {"rebate_id":2,"rebate_number":"RB-20260101-002","customer_name":"Urban Living Interiors",
+         "customer_type":"Interior Firm","rebate_type":"VOLUME","category":"High Pressure Laminate",
+         "target_amount":500000,"actual_amount":423000,"rebate_pct":2.0,
+         "rebate_value":8460,"period_start":"2026-01-01","period_end":"2026-06-30",
+         "status":"ACTIVE","notes":"On track — ₹77K remaining to hit target",
+         "created_at":"2026-01-01T00:00:00"},
+        {"rebate_id":3,"rebate_number":"RB-20260101-003","customer_name":"Metro Constructions",
+         "customer_type":"Contractor","rebate_type":"PROJECT","category":"Compact Laminate",
+         "target_amount":400000,"actual_amount":450000,"rebate_pct":2.5,
+         "rebate_value":11250,"period_start":"2026-02-01","period_end":"2026-04-30",
+         "status":"PENDING_APPROVAL","notes":"Project completed — rebate pending finance sign-off",
+         "created_at":"2026-02-01T00:00:00"},
+        {"rebate_id":4,"rebate_number":"RB-20260101-004","customer_name":"Skyline Architects",
+         "customer_type":"Architect","rebate_type":"LOYALTY","category":"All Products",
+         "target_amount":1000000,"actual_amount":870000,"rebate_pct":1.5,
+         "rebate_value":13050,"period_start":"2026-01-01","period_end":"2026-12-31",
+         "status":"ACTIVE","notes":"Loyalty rebate for 3rd year partner — ₹130K to target",
+         "created_at":"2026-01-01T00:00:00"},
+        {"rebate_id":5,"rebate_number":"RB-20260101-005","customer_name":"Horizon Hotels",
+         "customer_type":"Developer","rebate_type":"VOLUME","category":"Louvers",
+         "target_amount":800000,"actual_amount":576000,"rebate_pct":2.0,
+         "rebate_value":11520,"period_start":"2026-04-01","period_end":"2026-09-30",
+         "status":"ACTIVE","notes":"H1 volume rebate — 72% of target achieved",
+         "created_at":"2026-04-01T00:00:00"},
+        {"rebate_id":6,"rebate_number":"RB-20250401-001","customer_name":"TechPark Infra",
+         "customer_type":"Developer","rebate_type":"ANNUAL_TARGET","category":"All Products",
+         "target_amount":3000000,"actual_amount":2650000,"rebate_pct":2.5,
+         "rebate_value":66250,"period_start":"2025-04-01","period_end":"2026-03-31",
+         "status":"LAPSED","notes":"Missed annual target by ₹3.5L — rebate lapsed",
+         "created_at":"2025-04-01T00:00:00"},
+    ]
+
+    # ── KPIs ──────────────────────────────────────────────────────────────────
+    order_revenue  = sum(o["total_value"] for o in orders)
+    active_orders  = sum(1 for o in orders if o["status"] not in ("DELIVERED","CANCELLED"))
+    avg_margin     = round(sum(o["margin_pct"] for o in orders)/len(orders), 1)
+    pipeline_val   = sum(o["total_value"] for o in orders if o["status"] in ("DRAFT","CONFIRMED","IN_PRODUCTION"))
+    claims_pending = sum(o["amount_claimed"] for o in claims if o["status"] in ("SUBMITTED","UNDER_REVIEW","DRAFT"))
+    claims_approved= sum((o["amount_approved"] or 0) for o in claims if o["status"] in ("APPROVED","PARTIAL"))
+    rebate_liability=sum(r["rebate_value"] for r in rebates if r["status"] in ("ACTIVE","PENDING_APPROVAL","ACHIEVED"))
+    rebate_paid    = sum(r["rebate_value"] for r in rebates if r["status"] == "PAID")
+
+    return {
+        "kpis": {
+            "orders_this_month": len(orders),
+            "active_orders":     active_orders,
+            "order_revenue":     order_revenue,
+            "avg_margin_pct":    avg_margin,
+            "pipeline_value":    pipeline_val,
+            "claims_pending":    claims_pending,
+            "claims_approved":   claims_approved,
+            "rebate_liability":  rebate_liability,
+            "rebate_paid":       rebate_paid,
+        },
+        "products":   products,
+        "quotations": {str(k): v for k, v in quotations.items()},
+        "orders":     orders,
+        "claims":     claims,
+        "rebates":    rebates,
+        "data_source": "mock",
+    }

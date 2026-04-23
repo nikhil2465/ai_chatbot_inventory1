@@ -405,6 +405,168 @@ async def inward_tool(query: Optional[str] = None) -> dict:
     }
 
 
+async def discount_tool(query: Optional[str] = None) -> dict:
+    """
+    Distributor discount rules, pricing schedule, margin guardrails, and quote history.
+    Enables AI to answer: what discount can I give? Is this offer within policy?
+    """
+    # Try live DB — reuses the discount dashboard endpoint's query logic
+    if _DB_LAYER_AVAILABLE:
+        try:
+            pool = await get_pool()
+            if pool:
+                from app.db.discount_queries import get_discount_dashboard
+                data = await get_discount_dashboard(pool)
+                return _format_discount_for_ai(data)
+        except Exception as exc:
+            logger.warning("Discount tool DB failed: %s", exc)
+
+    # Mock fallback — same rules/prices as discounts.py mock
+    return {
+        "policy_note": (
+            "Discount policy: segment-based slabs with per-product margin guardrails. "
+            "Category rules override segment rules when both match."
+        ),
+        "rules_by_segment": {
+            "Contractor": [
+                {"qty_range": "1–49",    "discount": "3%",  "margin_floor": "9%"},
+                {"qty_range": "50–99",   "discount": "4%",  "margin_floor": "8.5%"},
+                {"qty_range": "100–199", "discount": "5%",  "margin_floor": "8%"},
+                {"qty_range": "200–499", "discount": "7%",  "margin_floor": "7%"},
+                {"qty_range": "500+",    "discount": "9%",  "margin_floor": "6%"},
+            ],
+            "Interior Firm": [
+                {"qty_range": "1–49",  "discount": "2%",  "margin_floor": "9.5%"},
+                {"qty_range": "50–99", "discount": "3.5%","margin_floor": "9%"},
+                {"qty_range": "100+",  "discount": "5–7%","margin_floor": "8–8.5%"},
+            ],
+            "Retailer": [
+                {"qty_range": "1–49",  "discount": "1%",  "margin_floor": "10%"},
+                {"qty_range": "50–99", "discount": "2%",  "margin_floor": "9.5%"},
+                {"qty_range": "100+",  "discount": "3%",  "margin_floor": "9%"},
+            ],
+            "Carpenter": [
+                {"qty_range": "1–24",  "discount": "3%",  "margin_floor": "9%"},
+                {"qty_range": "25–49", "discount": "5%",  "margin_floor": "8.5%"},
+                {"qty_range": "50–99", "discount": "7%",  "margin_floor": "8%"},
+                {"qty_range": "100+",  "discount": "9%",  "margin_floor": "7%"},
+            ],
+        },
+        "category_overrides": [
+            {"category": "High Pressure Laminate", "max_discount": "8%",  "margin_floor": "9%",  "note": "17% natural margin — more room"},
+            {"category": "Compact Laminate",        "max_discount": "6%",  "margin_floor": "11%", "note": "Premium product"},
+            {"category": "Acrylic",                 "max_discount": "5%",  "margin_floor": "11%", "note": "18% natural margin"},
+            {"category": "Laminate",                "max_discount": "4%",  "margin_floor": "11%", "note": "Decorative laminates"},
+            {"category": "Commercial",              "max_discount": "5%",  "margin_floor": "12%", "note": "21–22% natural margin"},
+            {"category": "Louvers",                 "max_discount": "4%",  "margin_floor": "12%", "note": "Aluminium profiles"},
+        ],
+        "product_pricing_summary": {
+            "18mm BWP (8x4)":     {"buy": 1680, "sell": 1920, "natural_margin": "12.5%"},
+            "12mm BWP (8x4)":     {"buy": 1100, "sell": 1280, "natural_margin": "14.1%"},
+            "18mm MR Plain (8x4)":{"buy": 920,  "sell": 1080, "natural_margin": "14.8%"},
+            "HPL 1mm Matte (8x4)":{"buy": 1080, "sell": 1300, "natural_margin": "16.9%"},
+            "Acrylic Laminate":   {"buy": 1720, "sell": 2100, "natural_margin": "18.1%"},
+        },
+        "kpis": {
+            "avg_discount_given_mtd": "4.9%",
+            "acceptance_rate":        "43%",
+            "quotes_this_month":      7,
+            "avg_margin_held":        "10.8%",
+        },
+        "recent_accepted_quotes": [
+            {"customer": "Mehta Constructions",  "product": "18mm BWP",          "qty": 80,  "discount": "4%", "margin": "8.76%", "value": "Rs.1.47L"},
+            {"customer": "Kumar Furniture Works","product": "12mm BWP",          "qty": 70,  "discount": "5%", "margin": "9.54%", "value": "Rs.0.85L"},
+            {"customer": "Nair Builders",         "product": "HPL Compact 6mm",  "qty": 20,  "discount": "6%", "margin": "11.94%","value": "Rs.0.68L"},
+        ],
+        "guardrail_examples": {
+            "safe":   "18mm BWP × 80sh × Contractor × 4% → margin 8.76% — above 8.5% floor",
+            "warning":"18mm BWP × 150sh × Contractor × 6% → margin 7.03% — below 8% floor",
+            "danger": "18mm BWP × 250sh × Contractor × 7% → margin 5.91% — CRITICAL, needs approval",
+        },
+        "data_source": "mock",
+    }
+
+
+def _format_discount_for_ai(data: dict) -> dict:
+    """Reshape discount dashboard data into AI-friendly summary."""
+    rules    = data.get("rules", [])
+    quotes   = data.get("quotes", [])
+    kpis     = data.get("kpis", {})
+
+    by_seg: dict = {}
+    cat_rules = []
+    for r in rules:
+        if not r.get("is_active", True):
+            continue
+        qty = f"{r['min_qty']}–{r['max_qty']}" if r.get("max_qty") else f"{r['min_qty']}+"
+        entry = {"qty_range": qty, "discount": f"{r['discount_pct']}%", "margin_floor": f"{r['min_margin_pct']}%"}
+        if r.get("segment"):
+            by_seg.setdefault(r["segment"], []).append(entry)
+        elif r.get("category"):
+            cat_rules.append({"category": r["category"], **entry})
+
+    accepted = [
+        {
+            "customer": q.get("customer_name", "—"),
+            "product":  q.get("product_name", "—"),
+            "qty":      q.get("quantity"),
+            "discount": f"{q.get('discount_pct')}%",
+            "margin":   f"{q.get('margin_pct')}%",
+            "value":    f"Rs.{round(q.get('total_net', 0)/100000, 2)}L",
+        }
+        for q in quotes if q.get("status") == "ACCEPTED"
+    ][:5]
+
+    return {
+        "rules_by_segment":        by_seg,
+        "category_overrides":      cat_rules,
+        "recent_accepted_quotes":  accepted,
+        "kpis": {
+            "avg_discount_given_mtd": f"{kpis.get('avg_discount_pct', 0)}%",
+            "acceptance_rate":        f"{kpis.get('acceptance_rate', 0)}%",
+            "quotes_this_month":      kpis.get("quotes_this_month", 0),
+            "avg_margin_held":        f"{kpis.get('avg_margin_pct', 0)}%",
+        },
+        "data_source": data.get("data_source", "mysql"),
+    }
+
+
+async def louvers_tool(query: Optional[str] = None) -> dict:
+    """Sales orders, distributor claims, customer rebates for louvers & laminates."""
+    try:
+        from app.api.louvers_laminates import _mock_dashboard
+        d = _mock_dashboard()
+        orders  = d.get("orders",  [])
+        claims  = d.get("claims",  [])
+        rebates = d.get("rebates", [])
+        kpis    = d.get("kpis",    {})
+        return {
+            "summary": {
+                "active_orders":    kpis.get("active_orders"),
+                "order_revenue_mtd": f"₹{kpis.get('order_revenue',0)/100000:.2f}L",
+                "avg_margin":       f"{kpis.get('avg_margin_pct',0)}%",
+                "pipeline_value":   f"₹{kpis.get('pipeline_value',0)/100000:.2f}L",
+                "claims_pending":   f"₹{kpis.get('claims_pending',0)/100000:.2f}L",
+                "rebate_liability": f"₹{kpis.get('rebate_liability',0)/100000:.2f}L",
+            },
+            "top_orders":  [{"#": o["order_number"], "customer": o["customer_name"],
+                             "product": o["product_name"], "value": f"₹{o['total_value']/100000:.2f}L",
+                             "status": o["status"]} for o in orders[:5]],
+            "open_claims": [{"#": c["claim_number"], "dist": c["distributor_name"],
+                             "type": c["claim_type"], "amount": f"₹{c['amount_claimed']:,.0f}",
+                             "status": c["status"]} for c in claims if c["status"] not in ("APPROVED","REJECTED")],
+            "active_rebates": [{"#": r["rebate_number"], "customer": r["customer_name"],
+                                "type": r["rebate_type"], "target": f"₹{r['target_amount']/100000:.1f}L",
+                                "actual": f"₹{r['actual_amount']/100000:.1f}L",
+                                "value": f"₹{r['rebate_value']:,.0f}",
+                                "status": r["status"]} for r in rebates if r["status"] in ("ACTIVE","PENDING_APPROVAL")],
+            "data_source": "mock",
+        }
+    except Exception as exc:
+        logger.warning("louvers_tool failed: %s", exc)
+        return {"error": str(exc)}
+
+
 TOOLS = {
     "stock":    stock_tool,
     "demand":   demand_tool,
@@ -417,4 +579,6 @@ TOOLS = {
     "po_grn":   po_grn_tool,
     "sales":    sales_tool,
     "inward":   inward_tool,
+    "discount": discount_tool,
+    "louvers":  louvers_tool,
 }

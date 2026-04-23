@@ -15,6 +15,8 @@ import Freight from './views/Freight';
 import Finance from './views/Finance';
 import Demand from './views/Demand';
 import AIAssistant from './views/AIAssistant';
+import DistributorDiscount from './views/DistributorDiscount';
+import LouversLaminates from './views/LouversLaminates';
 import DevGuide from './views/DevGuide';
 import About from './views/About';
 
@@ -32,6 +34,8 @@ const VIEW_TITLES = {
   finance:     'Profitability & Cash Intelligence — Owner View',
   demand:      'Demand Forecasting — What Will Sell Next?',
   chatbot:     'InvenIQ AI — Ask Anything About Your Business',
+  discounts:   'Distributor Discount Calculator — Smart Pricing with Margin Guardrails',
+  louvers:     'Louvers & Laminates — Sales Orders, Claims & Rebates',
   devguide:    'Developer Guide — Architecture, APIs & Best Practices',
   about:       'About InvenIQ — AI Inventory Intelligence Platform',
 };
@@ -98,6 +102,8 @@ export default function App() {
             onPendingQueryConsumed={clearPendingQuery}
           />
         )}
+        {activeView === 'discounts'   && <DistributorDiscount onGoChat={goChat} dbStatus={dbStatus} />}
+        {activeView === 'louvers'     && <LouversLaminates   onGoChat={goChat} dbStatus={dbStatus} />}
         {activeView === 'devguide'    && <DevGuide />}
         {activeView === 'about'       && <About />}
       </main>

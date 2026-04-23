@@ -229,6 +229,155 @@ async def create_purchase_order(pool: aiomysql.Pool, po_data: dict) -> dict:
     }
 
 
+async def create_grn(pool: aiomysql.Pool, grn_data: dict) -> dict:
+    """Create a new GRN record in the database."""
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+
+            # Resolve supplier
+            await cur.execute(
+                "SELECT supplier_id, supplier_name FROM suppliers "
+                "WHERE supplier_name LIKE %s AND is_active=1 LIMIT 1",
+                (f"%{grn_data['supplier_name']}%",),
+            )
+            supplier = await cur.fetchone()
+            if not supplier:
+                # Insert as a new supplier for demo/new-industry flow
+                await cur.execute(
+                    "INSERT INTO suppliers (supplier_name, contact_person, is_active) VALUES (%s, %s, 1)",
+                    (grn_data['supplier_name'], grn_data.get('received_by', 'TBD')),
+                )
+                supplier_id = cur.lastrowid
+                supplier_name = grn_data['supplier_name']
+            else:
+                supplier_id = supplier["supplier_id"]
+                supplier_name = supplier["supplier_name"]
+
+            # Optionally resolve PO
+            po_id = None
+            if grn_data.get("po_number"):
+                await cur.execute(
+                    "SELECT po_id FROM purchase_orders WHERE po_number=%s LIMIT 1",
+                    (grn_data["po_number"],),
+                )
+                po_row = await cur.fetchone()
+                if po_row:
+                    po_id = po_row["po_id"]
+
+            # Generate unique GRN number
+            await cur.execute("SELECT COUNT(*) AS cnt FROM grn")
+            cnt = (await cur.fetchone())["cnt"]
+            grn_number = f"GRN-{datetime.date.today().strftime('%Y%m%d')}-{cnt + 1:03d}"
+
+            invoice_value = float(grn_data.get("invoice_value") or 0)
+            grn_value = float(grn_data.get("grn_value") or invoice_value)
+            discrepancy = round(abs(invoice_value - grn_value), 2)
+            match_status = (
+                "MATCH" if discrepancy < 1
+                else "MISMATCH" if discrepancy > 0
+                else "PENDING"
+            )
+
+            received_date = grn_data.get("received_date") or datetime.date.today().isoformat()
+            notes = grn_data.get("notes") or "Created via InvenIQ"
+
+            await cur.execute("""
+                INSERT INTO grn
+                    (grn_number, po_id, supplier_id, received_date,
+                     invoice_value, grn_value, match_status, discrepancy_amt, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                grn_number, po_id, supplier_id, received_date,
+                invoice_value, grn_value, match_status, discrepancy, notes,
+            ))
+            await conn.commit()
+
+    return {
+        "success": True,
+        "grn_number": grn_number,
+        "supplier": supplier_name,
+        "po_number": grn_data.get("po_number") or "—",
+        "invoice_value": invoice_value,
+        "grn_value": grn_value,
+        "match_status": match_status,
+        "discrepancy_amt": discrepancy,
+        "received_date": received_date,
+    }
+
+
+async def get_quotations(pool: aiomysql.Pool, industry: str = "all") -> list:
+    """Fetch supplier quotations from DB, grouped by product. DB-first replacement for _mock_quotations()."""
+    async with pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute("""
+                SELECT
+                    p.product_id,
+                    p.sku_name       AS item,
+                    p.category,
+                    p.unit,
+                    p.buy_price      AS last_purchased_rate,
+                    CASE
+                        WHEN p.category IN ('Louvers','Operable Louvre System') THEN 'louvers'
+                        ELSE 'laminates'
+                    END              AS industry,
+                    s.supplier_name  AS supplier,
+                    q.rate,
+                    q.freight_cost   AS freight,
+                    q.lead_time_days,
+                    q.moq,
+                    q.valid_till,
+                    q.reliability_pct,
+                    q.notes,
+                    q.is_last_purchased
+                FROM quotations q
+                JOIN products  p ON q.product_id  = p.product_id
+                JOIN suppliers s ON q.supplier_id = s.supplier_id
+                WHERE q.is_active = 1
+                ORDER BY p.product_id, q.rate ASC
+            """)
+            rows = await cur.fetchall()
+
+    # Group rows into per-product cards
+    grouped: dict = {}
+    for r in rows:
+        pid = r["product_id"]
+        if pid not in grouped:
+            grouped[pid] = {
+                "item": r["item"],
+                "industry": r["industry"],
+                "category": r["category"],
+                "unit": r["unit"],
+                "last_purchased_rate": float(r["last_purchased_rate"] or 0),
+                "last_supplier": None,
+                "quotes": [],
+            }
+        quote = {
+            "supplier": r["supplier"],
+            "rate": float(r["rate"] or 0),
+            "freight": float(r["freight"] or 0),
+            "lead_time": f"{r['lead_time_days']} days",
+            "moq": int(r["moq"] or 1),
+            "valid_till": str(r["valid_till"]) if r["valid_till"] else "",
+            "reliability": float(r["reliability_pct"] or 90),
+            "notes": r["notes"] or "",
+        }
+        grouped[pid]["quotes"].append(quote)
+        if r["is_last_purchased"]:
+            grouped[pid]["last_supplier"] = r["supplier"]
+
+    items = list(grouped.values())
+
+    # Fallback: if no is_last_purchased flag set, use lowest-rate supplier
+    for item in items:
+        if item["last_supplier"] is None and item["quotes"]:
+            item["last_supplier"] = item["quotes"][0]["supplier"]
+
+    if industry != "all":
+        items = [i for i in items if i["industry"] == industry]
+
+    return items
+
+
 def _suggest_grn_action(notes: str) -> str:
     n = notes.lower()
     if any(w in n for w in ["grade", "quality", "wrong", "incorrect"]):

@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.chat import router as chat_router
 from app.api.po_grn import router as po_grn_router
 from app.api.dashboard import router as dashboard_router
+from app.api.discounts import router as discounts_router
+from app.api.louvers_laminates import router as louvers_router
 from app.core.config import get_settings
 
 load_dotenv()
@@ -49,7 +51,9 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000",
+                   "http://localhost:3001", "http://127.0.0.1:3001",
+                   "http://localhost:3002", "http://127.0.0.1:3002"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -58,6 +62,8 @@ app.add_middleware(
 app.include_router(chat_router, prefix="/api")
 app.include_router(po_grn_router, prefix="/api")
 app.include_router(dashboard_router, prefix="/api")
+app.include_router(discounts_router, prefix="/api")
+app.include_router(louvers_router,  prefix="/api")
 
 
 @app.get("/", tags=["Health"])

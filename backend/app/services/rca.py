@@ -358,6 +358,21 @@ def get_inline_rca_tip(query: str, tool_data: dict, mode: str = "ask") -> str:
     )
 
 
+def _safe_rupee(value) -> int:
+    """Parse rupee strings like 'Rs.1.79L', '₹4.2L' safely into integer rupees."""
+    try:
+        s = str(value).replace('Rs.', '').replace('₹', '').replace(',', '').strip()
+        if s.endswith(('L', 'l')):
+            return int(float(s[:-1]) * 100_000)
+        if s.endswith(('Cr', 'cr')):
+            return int(float(s[:-2]) * 10_000_000)
+        if s.endswith(('K', 'k')):
+            return int(float(s[:-1]) * 1_000)
+        return int(float(s))
+    except (ValueError, IndexError, TypeError):
+        return 0
+
+
 def run_rca(
     stock_data: dict,
     demand_data: Any = None,
@@ -411,7 +426,7 @@ def run_rca(
                     "No clearance pricing policy for 60-day non-movers",
                     f"Value locked: {item.get('value')} — opportunity cost growing daily",
                 ],
-                "business_impact": f"{item.get('value')} locked, earning zero return. At 10% cost of capital = ₹{round(int(str(item.get('value', '₹0')).replace('₹','').replace('L','')) * 100000 * 10 // 100 // 12, 0) if 'L' in str(item.get('value','')) else 0} per month wasted.",
+                "business_impact": f"{item.get('value')} locked, earning zero return. At 10% cost of capital = ₹{round(_safe_rupee(item.get('value', 0)) * 10 / 100 / 12):,} per month wasted.",
                 "fix": item.get("action", "Discount 12% + bundle with fast-moving SKU orders"),
                 "immediate_action": "Call top 3 contractors today with clearance offer",
             })

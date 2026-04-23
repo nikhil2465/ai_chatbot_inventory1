@@ -117,8 +117,30 @@ KEYWORD_MAP = {
         "customer", "client", "account", "who owes", "receivable",
         "credit", "at risk", "churn", "silent", "no order",
         "contractor", "interior firm", "retailer", "carpenter",
-        "discount", "outstanding", "payment", "mehta", "sharma",
+        "outstanding", "payment", "mehta", "sharma",
         "patel", "kumar", "city interiors", "overdue", "dso",
+    ],
+    "louvers": [
+        "louver", "louvre", "louvers", "louvres",
+        "aluminium profile", "aluminum profile", "z-profile",
+        "hpl", "high pressure laminate", "compact laminate", "acrylic laminate",
+        "operable louvre", "motorised louvre", "facade", "sun shading",
+        "distributor claim", "claim", "rebate", "customer rebate",
+        "sales order louvers", "facade order",
+        "powder coated", "anodized", "pvc blade",
+        "greenlam", "merino laminates", "formica", "stylam",
+        "alufit", "jindal aluminium", "technal", "ykk",
+    ],
+    "discount": [
+        "discount", "discounts", "discount rate", "discount policy",
+        "discount rules", "discount matrix", "discount schedule",
+        "pricing", "offer price", "quote price", "distributor price",
+        "how much discount", "what discount", "can i give",
+        "margin guardrail", "margin floor", "minimum margin",
+        "volume discount", "bulk discount", "slab pricing",
+        "contractor discount", "retailer discount", "carpenter discount",
+        "interior firm discount", "quote", "quotation", "price quote",
+        "selling price", "net price", "final price",
     ],
     "finance": [
         "margin", "profit", "revenue", "cash", "gst", "tax",
@@ -184,6 +206,19 @@ _EXTRA_KEYWORDS = {
         "cash cycle", "cash conversion", "working capital days",
         "net profit", "gross profit", "ebitda",
     ],
+    # Discount: extend with calculation-intent phrases
+    "discount": [
+        "discount", "discounts", "discount rate", "discount policy",
+        "discount rules", "discount matrix", "discount schedule",
+        "pricing", "offer price", "quote price", "distributor price",
+        "how much discount", "what discount", "can i give",
+        "margin guardrail", "margin floor", "minimum margin",
+        "volume discount", "bulk discount", "slab pricing",
+        "contractor discount", "retailer discount", "carpenter discount",
+        "interior firm discount", "quote", "quotation", "price quote",
+        "selling price", "net price", "final price", "discount calculator",
+        "distributor discount", "calculate discount", "pricing schedule",
+    ],
     # Stock: add conceptual terms that map to stock tool
     "stock": [
         "stock", "inventory", "sku", "sheets", "reorder", "stockout",
@@ -205,6 +240,7 @@ for _tool, _extra in _EXTRA_KEYWORDS.items():
 EXPLAIN_TOOLS = ["stock", "supplier", "finance"]
 # Tools always included for act mode
 ACT_BASE_TOOLS = ["stock", "order", "po_grn"]
+# Discount tool added to _EXTRA_KEYWORDS below to keep KEYWORD_MAP DRY
 
 
 def select_tools(query: str, mode: str = "ask") -> List[str]:

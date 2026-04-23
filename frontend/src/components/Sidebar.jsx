@@ -25,6 +25,10 @@ const NAV_ITEMS = [
   { section: 'Demand & Market' },
   { id: 'demand', label: 'Demand Forecasting', icon: <svg viewBox="0 0 16 16" fill="none"><path d="M2 14L5 9l3 2 3-5 3 2.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity=".9"/></svg> },
 
+  { section: 'Pricing & Discounts' },
+  { id: 'discounts', label: 'Discount Calculator', badge: 'NEW', badgeClass: 'nb-g', icon: <svg viewBox="0 0 16 16" fill="none"><rect x="1.5" y="1.5" width="13" height="13" rx="2" stroke="white" strokeWidth="1.3" opacity=".85"/><path d="M5 5h2M9 5h2M5 8h2M9 8h2M5 11h2M9 11h2" stroke="white" strokeWidth="1.3" strokeLinecap="round" opacity=".8"/><path d="M10.5 10l3 3M10.5 13l3-3" stroke="white" strokeWidth="1.4" strokeLinecap="round" opacity=".9"/></svg> },
+  { id: 'louvers', label: 'Louvers & Laminates', badge: 'NEW', badgeClass: 'nb-g', icon: <svg viewBox="0 0 16 16" fill="none"><rect x="1" y="2" width="14" height="2" rx=".8" fill="white" opacity=".9"/><rect x="1" y="6" width="14" height="2" rx=".8" fill="white" opacity=".75"/><rect x="1" y="10" width="14" height="2" rx=".8" fill="white" opacity=".6"/><path d="M2 4v8" stroke="white" strokeWidth="1.2" strokeLinecap="round" opacity=".5"/><path d="M14 4v8" stroke="white" strokeWidth="1.2" strokeLinecap="round" opacity=".5"/></svg> },
+
   { section: 'AI Tools' },
   { id: 'chatbot', label: 'AI Assistant', icon: <svg viewBox="0 0 16 16" fill="none"><rect x="1" y="2" width="14" height="9.5" rx="2" stroke="white" strokeWidth="1.5" opacity=".9"/><path d="M4.5 13.5l1.5-2H10" stroke="white" strokeWidth="1.5" strokeLinecap="round" opacity=".7"/><circle cx="5" cy="6.75" r="1" fill="white" opacity=".8"/><circle cx="8" cy="6.75" r="1" fill="white" opacity=".8"/><circle cx="11" cy="6.75" r="1" fill="white" opacity=".8"/></svg> },
 
