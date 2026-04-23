@@ -63,65 +63,408 @@ function AiBtn({ label, onClick, full, sm }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CREATE ORDER WIZARD  (4 steps)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BLANK_FORM = {
+  customer_name:'', contact_person:'', contact_phone:'', contact_email:'',
+  customer_type:'Architect', gst_number:'', billing_address:'',
+  product_id:'', quantity:1, specifications:'', supplier_id:'', site_location:'',
+  sell_price:0, discount_pct:0, payment_terms:'100% Advance', delivery_date:'', notes:'',
+};
+const WIZ_STEPS = ['Customer Details','Product & Supplier','Pricing & Terms','Review & Confirm'];
+const PAYMENT_TERMS = ['100% Advance','50% Advance + 50% on Delivery','Net 30 Days','Net 60 Days','Cash on Delivery','Letter of Credit'];
+
+function CreateOrderWizard({ products, quotations, onClose, onCreated, openAI, initProduct }) {
+  const [step, setStep]       = useState(1);
+  const [saving, setSaving]   = useState(false);
+  const [confirmed, setConfirmed] = useState(null);
+  const [f, setF] = useState(() => ({
+    ...BLANK_FORM,
+    product_id:  initProduct ? String(initProduct.product_id) : '',
+    sell_price:  initProduct ? initProduct.sell_price : 0,
+  }));
+
+  const up = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  const selProd   = products.find(p => String(p.product_id) === String(f.product_id)) || null;
+  const quotes    = quotations[String(f.product_id)] || [];
+  const selSup    = quotes.find(q => String(q.supplier_id) === String(f.supplier_id));
+
+  const handleProductPick = (pid) => {
+    const p = products.find(x => String(x.product_id) === String(pid));
+    setF(prev => ({ ...prev, product_id: pid, supplier_id: '', sell_price: p ? p.sell_price : 0 }));
+  };
+
+  const unitPrice  = Number(f.sell_price) || selProd?.sell_price || 0;
+  const disc       = unitPrice * (Number(f.discount_pct) / 100);
+  const netUnit    = unitPrice - disc;
+  const qty        = Math.max(1, Number(f.quantity) || 1);
+  const subtotal   = netUnit * qty;
+  const gst        = subtotal * 0.18;
+  const grandTotal = subtotal + gst;
+  const buyPrice   = selSup?.rate || selProd?.buy_price || 0;
+  const margin     = grandTotal > 0 ? ((grandTotal - buyPrice * qty) / grandTotal * 100) : 0;
+
+  const stepValid  = [
+    f.customer_name.trim() !== '',
+    f.product_id !== '' && qty > 0,
+    f.delivery_date !== '',
+    true,
+  ];
+
+  const handleSubmit = async () => {
+    setSaving(true);
+    try {
+      const payload = {
+        customer_name: f.customer_name, customer_type: f.customer_type,
+        product_id: Number(f.product_id), product_name: selProd?.sku_name || '',
+        category: selProd?.category || '', unit: selProd?.unit || '',
+        sell_price: netUnit, buy_price: buyPrice,
+        supplier_id: f.supplier_id ? Number(f.supplier_id) : null,
+        supplier_name: selSup?.name || '',
+        delivery_date: f.delivery_date, site_location: f.site_location, quantity: qty,
+        notes: [f.specifications && `Specs: ${f.specifications}`, `Payment: ${f.payment_terms}`, f.notes].filter(Boolean).join(' | '),
+      };
+      const res  = await fetch('/api/louvers/orders', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+      const json = await res.json();
+      setConfirmed(json);
+      onCreated(json);
+    } catch(e) { console.error(e); }
+    finally { setSaving(false); }
+  };
+
+  /* ── Success screen ── */
+  if (confirmed) return (
+    <div className="ll-wizard-success">
+      <div className="ll-wiz-success-icon">✓</div>
+      <div className="ll-wiz-success-title">Sales Order Created!</div>
+      <div className="ll-wiz-success-num">{confirmed.order_number}</div>
+      <div className="ll-wiz-success-sub">{selProd?.sku_name} · {qty} {selProd?.unit} · {fmt(grandTotal)} incl. GST · Valid till {confirmed.valid_till}</div>
+      <div style={{display:'flex',gap:10,justifyContent:'center',marginTop:18}}>
+        <button className="dc-save-btn" onClick={() => { setConfirmed(null); setStep(1); setF({...BLANK_FORM}); }}>+ New Order</button>
+        <button className="dc-ai-btn" onClick={onClose}>Done</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="ll-wizard">
+      {/* Header */}
+      <div className="ll-wiz-hdr">
+        <div>
+          <div className="ctit">New Sales Order</div>
+          <div className="csub">Step {step} of 4 — {WIZ_STEPS[step-1]}</div>
+        </div>
+        <button className="dc-ai-btn" onClick={onClose}>✕ Cancel</button>
+      </div>
+
+      {/* Progress bar */}
+      <div className="ll-wiz-progress">
+        {WIZ_STEPS.map((s,i) => (
+          <div key={i} className={`ll-wiz-pstep${step>i+1?' done':step===i+1?' active':''}`}
+            onClick={() => step > i+1 && setStep(i+1)} style={{cursor:step>i+1?'pointer':'default'}}>
+            <div className="ll-wiz-pnum">{step>i+1?'✓':i+1}</div>
+            <div className="ll-wiz-plbl">{s}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── STEP 1: Customer Details ── */}
+      {step===1 && (
+        <div className="ll-wiz-body">
+          <div className="ll-wiz-sec-title">Customer / Company Details</div>
+          <div className="ll-form-grid">
+            <div style={{gridColumn:'1 / -1'}}>
+              <div className="dc-lbl">Customer / Company Name *</div>
+              <input className="dc-inp" placeholder="e.g. Prestige Developers Pvt Ltd" autoFocus
+                value={f.customer_name} onChange={e=>up('customer_name',e.target.value)} />
+            </div>
+            <div>
+              <div className="dc-lbl">Contact Person</div>
+              <input className="dc-inp" placeholder="e.g. Mr. Rajesh Kumar"
+                value={f.contact_person} onChange={e=>up('contact_person',e.target.value)} />
+            </div>
+            <div>
+              <div className="dc-lbl">Customer Type *</div>
+              <select className="dc-inp" value={f.customer_type} onChange={e=>up('customer_type',e.target.value)}>
+                {CUST_TYPES.map(t=><option key={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <div className="dc-lbl">Phone Number</div>
+              <input className="dc-inp" type="tel" placeholder="+91 98765 43210"
+                value={f.contact_phone} onChange={e=>up('contact_phone',e.target.value)} />
+            </div>
+            <div>
+              <div className="dc-lbl">Email Address</div>
+              <input className="dc-inp" type="email" placeholder="contact@company.com"
+                value={f.contact_email} onChange={e=>up('contact_email',e.target.value)} />
+            </div>
+            <div>
+              <div className="dc-lbl">GST Number (optional)</div>
+              <input className="dc-inp" placeholder="22AAAAA0000A1Z5"
+                value={f.gst_number} onChange={e=>up('gst_number',e.target.value)} />
+            </div>
+            <div>
+              <div className="dc-lbl">Billing Address</div>
+              <input className="dc-inp" placeholder="Door, Street, City, State – PIN"
+                value={f.billing_address} onChange={e=>up('billing_address',e.target.value)} />
+            </div>
+          </div>
+          <div className="ll-wiz-ai-row">
+            <AiBtn sm label="Pricing tips for this customer type"
+              onClick={()=>openAI(`I'm creating a sales order for a ${f.customer_type}: "${f.customer_name||'new customer'}". What pricing strategy, typical discount range, and credit terms should I use? What are key risks when dealing with ${f.customer_type} clients?`)} />
+          </div>
+        </div>
+      )}
+
+      {/* ── STEP 2: Product & Supplier ── */}
+      {step===2 && (
+        <div className="ll-wiz-body">
+          <div className="ll-wiz-sec-title">Product Selection &amp; Supplier</div>
+          <div className="ll-form-grid">
+            <div style={{gridColumn:'1 / -1'}}>
+              <div className="dc-lbl">Select Product *</div>
+              <select className="dc-inp" value={f.product_id} onChange={e=>handleProductPick(e.target.value)}>
+                <option value="">— Choose a product —</option>
+                {products.map(p=>(
+                  <option key={p.product_id} value={p.product_id}>
+                    {p.sku_name} ({p.category}) — {fmt(p.sell_price)}/{p.unit} · {fmtPct(p.margin_pct)} margin
+                  </option>
+                ))}
+              </select>
+            </div>
+            {selProd && <>
+              <div>
+                <div className="dc-lbl">Quantity ({selProd.unit}) *</div>
+                <input type="number" min={1} className="dc-inp" value={f.quantity}
+                  onChange={e=>up('quantity',Math.max(1,Number(e.target.value)||1))} />
+              </div>
+              <div>
+                <div className="dc-lbl">Specifications / Finish / Colour</div>
+                <input className="dc-inp" placeholder="e.g. RAL 9005 Matt Black, Anodized Silver, Teak finish…"
+                  value={f.specifications} onChange={e=>up('specifications',e.target.value)} />
+              </div>
+              <div style={{gridColumn:'1 / -1'}}>
+                <div className="dc-lbl">Delivery / Site Address *</div>
+                <input className="dc-inp" placeholder="Full site address — e.g. 4th Floor, Prestige Tower, Whitefield, Bangalore 560066"
+                  value={f.site_location} onChange={e=>up('site_location',e.target.value)} />
+              </div>
+            </>}
+          </div>
+
+          {selProd && (
+            <div className="ll-wiz-prod-info">
+              <div className="ll-wiz-prod-info-row"><span>Sell Price</span><strong>{fmt(selProd.sell_price)}/{selProd.unit}</strong></div>
+              <div className="ll-wiz-prod-info-row"><span>Category</span><strong>{selProd.category}</strong></div>
+              <div className="ll-wiz-prod-info-row"><span>Margin</span><strong style={{color:'var(--accent)'}}>{fmtPct(selProd.margin_pct)}</strong></div>
+              <div className="ll-wiz-prod-info-row"><span>Applications</span><strong style={{fontSize:10}}>{selProd.applications}</strong></div>
+              <div className="ll-wiz-prod-info-row"><span>Certifications</span><strong style={{fontSize:10}}>{selProd.certifications}</strong></div>
+            </div>
+          )}
+
+          {quotes.length>0 && (
+            <div style={{marginTop:16}}>
+              <div className="dc-lbl" style={{marginBottom:8}}>Select Supplier ({quotes.length} quoting) — click to choose</div>
+              <div className="ll-supplier-grid">
+                {quotes.map(q=>{
+                  const landed=q.rate+q.freight;
+                  const chosen=String(f.supplier_id)===String(q.supplier_id);
+                  const recCls=q.rec==='PREFERRED'?'bg':q.rec==='REVIEW'?'br':'bb';
+                  return (
+                    <div key={q.supplier_id} className={`ll-supplier-card${chosen?' chosen':''}${q.is_best?' ll-best':''}`}
+                      onClick={()=>up('supplier_id',q.supplier_id)}>
+                      {q.is_best&&<span className="ll-best">Best Value</span>}
+                      <div className="ll-sup-name">{q.name} <span className={`bdg ${recCls}`} style={{fontSize:9}}>{q.rec}</span></div>
+                      <div className="ll-sup-city">{q.city} · {q.lead}d lead · {q.rel}% reliable · MOQ {q.moq}</div>
+                      <div className="ll-sup-rates">
+                        <div><span>Base Rate</span><strong>{fmt(q.rate)}/{selProd.unit}</strong></div>
+                        <div><span>Freight</span><strong>+{fmt(q.freight)}</strong></div>
+                        <div><span>Landed</span><strong style={{color:'var(--accent)'}}>{fmt(landed)}</strong></div>
+                        <div><span>Lead Time</span><strong>{q.lead} days</strong></div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <div className="ll-wiz-ai-row">
+            <AiBtn sm label="Which supplier should I choose?"
+              onClick={()=>{
+                const lines=quotes.map(q=>`${q.name}: ₹${q.rate+q.freight} landed, ${q.lead}d lead, ${q.rel}% reliable`).join('; ');
+                openAI(`Supplier selection for ${selProd?.sku_name||'this product'}, qty ${f.quantity}. Options: ${lines}. Which is best and why? Consider rate, reliability and lead time.`);
+              }} />
+            {selProd&&<AiBtn sm label="Product specs guide"
+              onClick={()=>openAI(`Explain the technical specs and certifications for ${selProd.sku_name} (${selProd.category}). What finish/colour options exist? Key selling points for a ${f.customer_type}? Certifications: ${selProd.certifications}`)} />}
+          </div>
+        </div>
+      )}
+
+      {/* ── STEP 3: Pricing & Terms ── */}
+      {step===3 && (
+        <div className="ll-wiz-body">
+          <div className="ll-wiz-sec-title">Pricing, Payment &amp; Delivery</div>
+          <div className="ll-form-grid">
+            <div>
+              <div className="dc-lbl">Unit Sell Price (₹/{selProd?.unit||'unit'}) *</div>
+              <input type="number" className="dc-inp" value={f.sell_price||selProd?.sell_price||''}
+                onChange={e=>up('sell_price',Number(e.target.value))} />
+            </div>
+            <div>
+              <div className="dc-lbl">Discount % (0–30)</div>
+              <input type="number" min={0} max={30} step={0.5} className="dc-inp" value={f.discount_pct}
+                onChange={e=>up('discount_pct',Math.min(30,Math.max(0,Number(e.target.value))))} />
+            </div>
+            <div>
+              <div className="dc-lbl">Payment Terms *</div>
+              <select className="dc-inp" value={f.payment_terms} onChange={e=>up('payment_terms',e.target.value)}>
+                {PAYMENT_TERMS.map(t=><option key={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <div className="dc-lbl">Delivery Date *</div>
+              <input type="date" className="dc-inp" value={f.delivery_date}
+                onChange={e=>up('delivery_date',e.target.value)}
+                min={new Date().toISOString().split('T')[0]} />
+            </div>
+            <div style={{gridColumn:'1 / -1'}}>
+              <div className="dc-lbl">Special Instructions / Notes</div>
+              <textarea className="dc-inp" rows={2}
+                placeholder="Special packaging, labelling, installation notes, surface protection requirements…"
+                value={f.notes} onChange={e=>up('notes',e.target.value)} style={{resize:'vertical'}} />
+            </div>
+          </div>
+
+          <div className="ll-wiz-price-box">
+            <div className="ll-wiz-price-title">Live Order Summary</div>
+            <div className="ll-wiz-price-row"><span>Unit Price</span><span>{fmt(unitPrice)}/{selProd?.unit||'unit'}</span></div>
+            {f.discount_pct>0&&<div className="ll-wiz-price-row" style={{color:'var(--r2)'}}><span>Discount ({f.discount_pct}%)</span><span>−{fmt(disc)}</span></div>}
+            <div className="ll-wiz-price-row"><span>Net Unit Price</span><span style={{fontWeight:700}}>{fmt(netUnit)}/{selProd?.unit||'unit'}</span></div>
+            <div className="ll-wiz-price-row"><span>Quantity</span><span>{qty} {selProd?.unit||'units'}</span></div>
+            <div className="ll-wiz-price-row ll-wiz-price-sub"><span>Subtotal</span><span>{fmt(subtotal)}</span></div>
+            <div className="ll-wiz-price-row"><span>GST @ 18%</span><span>{fmt(gst)}</span></div>
+            <div className="ll-wiz-price-row ll-wiz-price-grand"><span>GRAND TOTAL</span><span>{fmt(grandTotal)}</span></div>
+            <div className="ll-wiz-price-row ll-wiz-price-margin">
+              <span>Est. Gross Margin</span>
+              <span style={{color:margin>=18?'var(--accent)':margin>=12?'var(--a2)':'var(--r2)'}}>{fmtPct(margin)}</span>
+            </div>
+          </div>
+
+          <div className="ll-wiz-ai-row">
+            <AiBtn sm label="Is this pricing competitive?"
+              onClick={()=>openAI(`Pricing check: ${f.quantity} ${selProd?.unit} of ${selProd?.sku_name} at ${fmt(netUnit)} net (${f.discount_pct}% discount from list ${fmt(selProd?.sell_price)}). ${f.customer_type} customer. Grand total ${fmt(grandTotal)} incl. GST. Margin ${fmtPct(margin)}. Payment: ${f.payment_terms}. Is this competitive? What's the minimum I should accept?`)} />
+            <AiBtn sm label="GST & invoice guidance"
+              onClick={()=>openAI(`What HSN code and GST rate applies to ${selProd?.sku_name} (${selProd?.category})? How should GST be shown on the invoice for a ${f.customer_type}? Any ITC implications?`)} />
+          </div>
+        </div>
+      )}
+
+      {/* ── STEP 4: Review & Confirm ── */}
+      {step===4 && (
+        <div className="ll-wiz-body">
+          <div className="ll-wiz-sec-title">Review Sales Order Document</div>
+          <div className="ll-so-doc">
+            <div className="ll-so-doc-hdr">
+              <div>
+                <div className="ll-so-doc-co">InvenIQ — Louvers &amp; Laminates</div>
+                <div className="ll-so-doc-tagline">Inventory Intelligence Platform</div>
+              </div>
+              <div style={{textAlign:'right'}}>
+                <div className="ll-so-doc-label">SALES ORDER</div>
+                <div className="ll-so-doc-meta">Date: {new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</div>
+                <div className="ll-so-doc-meta">Delivery: {f.delivery_date?new Date(f.delivery_date).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}):'—'}</div>
+              </div>
+            </div>
+            <div className="ll-so-doc-parties">
+              <div className="ll-so-doc-party">
+                <div className="ll-so-doc-party-lbl">Bill To</div>
+                <div className="ll-so-doc-party-name">{f.customer_name||'—'}</div>
+                {f.contact_person&&<div className="ll-so-doc-party-line">{f.contact_person}</div>}
+                {f.contact_phone&&<div className="ll-so-doc-party-line">{f.contact_phone}</div>}
+                {f.contact_email&&<div className="ll-so-doc-party-line">{f.contact_email}</div>}
+                {f.gst_number&&<div className="ll-so-doc-party-line">GSTIN: {f.gst_number}</div>}
+                {f.billing_address&&<div className="ll-so-doc-party-line" style={{marginTop:4}}>{f.billing_address}</div>}
+              </div>
+              <div className="ll-so-doc-party">
+                <div className="ll-so-doc-party-lbl">Deliver To</div>
+                <div className="ll-so-doc-party-name">{f.site_location||f.billing_address||'—'}</div>
+                <div className="ll-so-doc-party-line">Customer Type: <strong>{f.customer_type}</strong></div>
+                <div className="ll-so-doc-party-line">Payment: <strong>{f.payment_terms}</strong></div>
+                {selSup&&<div className="ll-so-doc-party-line" style={{marginTop:4}}>Supplier: <strong>{selSup.name}</strong></div>}
+              </div>
+            </div>
+            <table className="ll-so-doc-tbl">
+              <thead><tr>
+                <th style={{width:'38%'}}>Product / Description</th>
+                <th style={{textAlign:'center'}}>Qty</th>
+                <th style={{textAlign:'right'}}>Unit Price</th>
+                <th style={{textAlign:'right'}}>Discount</th>
+                <th style={{textAlign:'right'}}>Net Price</th>
+                <th style={{textAlign:'right'}}>Amount</th>
+              </tr></thead>
+              <tbody><tr>
+                <td>
+                  <div style={{fontWeight:700}}>{selProd?.sku_name||'—'}</div>
+                  <div style={{fontSize:10,color:'var(--text3)'}}>{selProd?.category} · {selProd?.brand}</div>
+                  {f.specifications&&<div style={{fontSize:10,color:'var(--text2)',marginTop:2}}>Spec: {f.specifications}</div>}
+                </td>
+                <td style={{textAlign:'center',fontFamily:'var(--mono)'}}>{qty} {selProd?.unit}</td>
+                <td style={{textAlign:'right',fontFamily:'var(--mono)'}}>{fmt(unitPrice)}</td>
+                <td style={{textAlign:'right',fontFamily:'var(--mono)',color:'var(--r2)'}}>{f.discount_pct>0?`${f.discount_pct}%`:'—'}</td>
+                <td style={{textAlign:'right',fontFamily:'var(--mono)',fontWeight:700}}>{fmt(netUnit)}</td>
+                <td style={{textAlign:'right',fontFamily:'var(--mono)',fontWeight:700}}>{fmt(subtotal)}</td>
+              </tr></tbody>
+            </table>
+            <div className="ll-so-doc-totals">
+              <div className="ll-so-doc-trow"><span>Subtotal (excl. GST)</span><span>{fmt(subtotal)}</span></div>
+              <div className="ll-so-doc-trow"><span>GST @ 18%</span><span>{fmt(gst)}</span></div>
+              <div className="ll-so-doc-trow ll-so-doc-grand"><span>GRAND TOTAL</span><span>{fmt(grandTotal)}</span></div>
+            </div>
+            {(f.notes||f.specifications)&&(
+              <div className="ll-so-doc-notes"><strong>Notes:</strong> {[f.specifications&&`Specs: ${f.specifications}`,f.notes].filter(Boolean).join(' | ')}</div>
+            )}
+            <div className="ll-so-doc-terms">Terms &amp; Conditions: {f.payment_terms} · Subject to stock availability · Prices include freight from supplier · GST as applicable</div>
+          </div>
+
+          <div className="ll-wiz-ai-row">
+            <AiBtn label="AI: Review this order for risks before confirming"
+              onClick={()=>openAI(`Review my sales order before I confirm: ${f.customer_name} (${f.customer_type}), ${qty} ${selProd?.unit} of ${selProd?.sku_name}, Grand Total ${fmt(grandTotal)} incl. GST, margin ${fmtPct(margin)}, payment ${f.payment_terms}, delivery ${f.delivery_date||'TBD'}, supplier ${selSup?.name||'not selected'}. Any risks, red flags or negotiation points?`)} />
+          </div>
+        </div>
+      )}
+
+      {/* Footer navigation */}
+      <div className="ll-wiz-footer">
+        {step>1&&<button className="ll-wiz-back-btn" onClick={()=>setStep(s=>s-1)}>← Back</button>}
+        <div style={{flex:1}}/>
+        {step<4
+          ? <button className="ll-wiz-next-btn" onClick={()=>setStep(s=>s+1)} disabled={!stepValid[step-1]}>
+              Next: {WIZ_STEPS[step]} →
+            </button>
+          : <button className="dc-save-btn" onClick={handleSubmit} disabled={saving}>
+              {saving?'Creating Order…':'✓ Confirm & Create Sales Order'}
+            </button>
+        }
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // TAB 1: SALES ORDERS
 // ─────────────────────────────────────────────────────────────────────────────
 
 function SalesOrdersTab({ data, onRefresh, openAI }) {
-  const products  = data?.products  || [];
-  const quotations= data?.quotations || {};
-  const [orders, setOrders] = useState(data?.orders || []);
-  const [filter, setFilter] = useState('ALL');
-
-  const [form, setForm] = useState({
-    customer_name:'', customer_type:'Architect',
-    product_id:'', quantity:1, supplier_id:'', delivery_date:'', site_location:'', notes:'',
-  });
-  const [saving, setSaving]     = useState(false);
-  const [savedOrder, setSavedOrder] = useState(null);
-  const [showForm, setShowForm] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState(null);
-  const [activeQuotes, setActiveQuotes] = useState([]);
+  const products   = data?.products   || [];
+  const quotations = data?.quotations || {};
+  const [orders, setOrders]           = useState(data?.orders || []);
+  const [filter, setFilter]           = useState('ALL');
+  const [showWizard, setShowWizard]   = useState(false);
+  const [wizardInit, setWizardInit]   = useState(null);
 
   useEffect(() => { setOrders(data?.orders || []); }, [data]);
-
-  const handleProductChange = (pid) => {
-    const p = products.find(x => String(x.product_id) === String(pid));
-    setSelectedProduct(p || null);
-    setActiveQuotes(quotations[String(pid)] || []);
-    setForm(f => ({ ...f, product_id: pid, supplier_id: '' }));
-  };
-
-  const selectedSupplier = activeQuotes.find(q => String(q.supplier_id) === String(form.supplier_id));
-  const orderTotal = selectedProduct && form.quantity > 0
-    ? selectedProduct.sell_price * Number(form.quantity) : 0;
-
-  const handleSubmitOrder = async () => {
-    if (!form.customer_name || !form.product_id || !form.quantity) return;
-    setSaving(true);
-    try {
-      const payload = {
-        ...form,
-        product_id:   Number(form.product_id),
-        quantity:     Number(form.quantity),
-        product_name: selectedProduct?.sku_name || '',
-        category:     selectedProduct?.category || '',
-        unit:         selectedProduct?.unit || '',
-        sell_price:   selectedProduct?.sell_price || 0,
-        buy_price:    selectedSupplier?.rate || selectedProduct?.buy_price || 0,
-        supplier_name: selectedSupplier?.name || '',
-      };
-      const res = await fetch('/api/louvers/orders', {
-        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload),
-      });
-      const json = await res.json();
-      setSavedOrder(json);
-      setShowForm(false);
-      setForm({ customer_name:'', customer_type:'Architect', product_id:'', quantity:1,
-                supplier_id:'', delivery_date:'', site_location:'', notes:'' });
-      onRefresh();
-    } catch(e) { console.error(e); }
-    finally { setSaving(false); }
-  };
 
   const handleAdvanceStatus = async (orderId, newStatus) => {
     try {
@@ -139,7 +482,7 @@ function SalesOrdersTab({ data, onRefresh, openAI }) {
 
   return (
     <div>
-      {/* ── Create Sales Order — prominent action card ──────────────────────── */}
+      {/* ── Create Sales Order — action bar ── */}
       <div className="ll-create-order-bar">
         <div className="ll-create-order-bar-left">
           <div className="ll-create-order-bar-icon">
@@ -150,19 +493,11 @@ function SalesOrdersTab({ data, onRefresh, openAI }) {
           </div>
           <div>
             <div className="ll-create-order-bar-title">Create New Sales Order</div>
-            <div className="ll-create-order-bar-sub">Place a new louvers or laminates order — select product, supplier &amp; customer details</div>
+            <div className="ll-create-order-bar-sub">4-step guided form — customer details, product, pricing, review &amp; confirm</div>
           </div>
         </div>
-        <button
-          className="ll-create-order-bar-btn"
-          onClick={() => {
-            setShowForm(true);
-            setSelectedProduct(null);
-            setActiveQuotes([]);
-            setForm(f => ({ ...f, product_id:'', supplier_id:'' }));
-            setTimeout(() => document.getElementById('ll-order-form')?.scrollIntoView({ behavior:'smooth', block:'start' }), 80);
-          }}
-        >
+        <button className="ll-create-order-bar-btn"
+          onClick={() => { setWizardInit(null); setShowWizard(true); setTimeout(()=>document.getElementById('ll-wizard-anchor')?.scrollIntoView({behavior:'smooth',block:'start'}),80); }}>
           <svg viewBox="0 0 16 16" fill="none" width="14" height="14">
             <path d="M8 2v12M2 8h12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/>
           </svg>
@@ -170,11 +505,24 @@ function SalesOrdersTab({ data, onRefresh, openAI }) {
         </button>
       </div>
 
+      {/* ── Wizard (inline) ── */}
+      {showWizard && (
+        <div id="ll-wizard-anchor" style={{marginBottom:20}}>
+          <CreateOrderWizard
+            products={products} quotations={quotations}
+            initProduct={wizardInit}
+            openAI={openAI}
+            onClose={() => setShowWizard(false)}
+            onCreated={() => { onRefresh(); }}
+          />
+        </div>
+      )}
+
       {/* Product Catalogue */}
       <div className="ll-section-hdr">
         <div>
           <div className="ctit">Product Catalogue</div>
-          <div className="csub">7 products · click a card to pre-select, or use the button above to start blank</div>
+          <div className="csub">7 products · click a card to open wizard with that product pre-selected</div>
         </div>
         <AiBtn sm label="Catalogue insights"
           onClick={() => openAI(
@@ -193,8 +541,8 @@ function SalesOrdersTab({ data, onRefresh, openAI }) {
           return (
             <div
               key={p.product_id}
-              className={`ll-product-card${isSelected ? ' selected' : ''}`}
-              onClick={() => { handleProductChange(p.product_id); setShowForm(true); }}
+              className={`ll-product-card${showWizard && wizardInit?.product_id === p.product_id ? ' selected' : ''}`}
+              onClick={() => { setWizardInit(p); setShowWizard(true); setTimeout(()=>document.getElementById('ll-wizard-anchor')?.scrollIntoView({behavior:'smooth',block:'start'}),80); }}
             >
               <div className="ll-prod-cat">{p.category}</div>
               <div className="ll-prod-name">{p.sku_name}</div>
@@ -224,148 +572,6 @@ function SalesOrdersTab({ data, onRefresh, openAI }) {
           );
         })}
       </div>
-
-      {/* Create Order Form */}
-      {showForm && (
-        <div id="ll-order-form" className="card" style={{ marginTop: 14, borderTop: '3px solid var(--accent)' }}>
-          <div className="ch">
-            <div>
-              <div className="ctit">
-                {selectedProduct ? `New Sales Order — ${selectedProduct.sku_name}` : 'New Sales Order'}
-              </div>
-              <div className="csub">
-                {selectedProduct
-                  ? `${selectedProduct.category} · ${fmt(selectedProduct.sell_price)}/${selectedProduct.unit}`
-                  : 'Select a product to begin'}
-              </div>
-            </div>
-            <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-              {savedOrder && <span className="bdg bg">✓ {savedOrder.order_number}</span>}
-              <AiBtn sm label="Pricing advice"
-                onClick={() => openAI(
-                  `I'm creating a sales order for ${selectedProduct.sku_name} at ${fmt(selectedProduct.sell_price)}/${selectedProduct.unit}. `+
-                  `Margin: ${fmtPct(selectedProduct.margin_pct)}. `+
-                  `Customer type: ${form.customer_type}. Quantity: ${form.quantity} ${selectedProduct.unit}. `+
-                  `Is this a good deal? Any pricing or margin tips for this product + customer combination?`
-                )} />
-              <button className="dc-ai-btn" onClick={() => setShowForm(false)}>✕ Close</button>
-            </div>
-          </div>
-
-          <div className="ll-form-grid">
-            {/* Product selector — shown when form opened via button (no card click) */}
-            {!selectedProduct && (
-              <div style={{ gridColumn: '1 / -1' }}>
-                <div className="dc-lbl">Select Product *</div>
-                <select className="dc-inp"
-                  value={form.product_id}
-                  onChange={e => handleProductChange(e.target.value)}>
-                  <option value="">— Choose a product —</option>
-                  {products.map(p => (
-                    <option key={p.product_id} value={p.product_id}>
-                      {p.sku_name} ({p.category}) — {fmt(p.sell_price)}/{p.unit} · {fmtPct(p.margin_pct)} margin
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            <div>
-              <div className="dc-lbl">Customer Name *</div>
-              <input className="dc-inp" placeholder="e.g. Prestige Developers"
-                value={form.customer_name} onChange={e => setForm(f=>({...f,customer_name:e.target.value}))} />
-            </div>
-            <div>
-              <div className="dc-lbl">Customer Type</div>
-              <select className="dc-inp" value={form.customer_type}
-                onChange={e => setForm(f=>({...f,customer_type:e.target.value}))}>
-                {CUST_TYPES.map(t=><option key={t}>{t}</option>)}
-              </select>
-            </div>
-            <div>
-              <div className="dc-lbl">Quantity ({selectedProduct.unit}) *</div>
-              <input type="number" min={1} className="dc-inp" value={form.quantity}
-                onChange={e => setForm(f=>({...f,quantity:Math.max(1,Number(e.target.value)||1)}))} />
-            </div>
-            <div>
-              <div className="dc-lbl">Delivery Date</div>
-              <input type="date" className="dc-inp" value={form.delivery_date}
-                onChange={e => setForm(f=>({...f,delivery_date:e.target.value}))} />
-            </div>
-            <div>
-              <div className="dc-lbl">Site Location</div>
-              <input className="dc-inp" placeholder="e.g. Whitefield, Bangalore"
-                value={form.site_location} onChange={e => setForm(f=>({...f,site_location:e.target.value}))} />
-            </div>
-            <div>
-              <div className="dc-lbl">Notes</div>
-              <input className="dc-inp" placeholder="Colour, finish, special requirements…"
-                value={form.notes} onChange={e => setForm(f=>({...f,notes:e.target.value}))} />
-            </div>
-          </div>
-
-          {/* Supplier selection */}
-          {activeQuotes.length > 0 && (
-            <div style={{ marginTop: 12 }}>
-              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
-                <div className="dc-lbl" style={{ margin:0 }}>Select Supplier ({activeQuotes.length} quoting)</div>
-                <AiBtn sm label="Compare suppliers"
-                  onClick={() => {
-                    const lines = activeQuotes.map(q=>
-                      `${q.name} (${q.city}): ₹${q.rate}/${selectedProduct.unit} + ₹${q.freight} freight, ${q.lead}d lead, ${q.rel}% reliability`
-                    ).join('; ');
-                    openAI(
-                      `Compare suppliers for ${selectedProduct.sku_name}: ${lines}. `+
-                      `Which supplier should I choose for a ${form.quantity}-unit order? `+
-                      `Balance rate, reliability and lead time.`
-                    );
-                  }} />
-              </div>
-              <div className="ll-supplier-grid">
-                {activeQuotes.map(q => {
-                  const landed  = q.rate + q.freight;
-                  const isChosen= String(form.supplier_id) === String(q.supplier_id);
-                  const recCls  = q.rec==='PREFERRED'?'bg': q.rec==='REVIEW'?'br':'bb';
-                  return (
-                    <div key={q.supplier_id}
-                      className={`ll-supplier-card${isChosen?' chosen':''}${q.is_best?' ll-best':''}`}
-                      onClick={() => setForm(f=>({...f,supplier_id:q.supplier_id}))}>
-                      <div className="ll-sup-name">{q.name} <span className={`bdg ${recCls}`} style={{fontSize:9}}>{q.rec}</span></div>
-                      <div className="ll-sup-city">{q.city} · {q.lead}d lead · {q.rel}% reliable · MOQ {q.moq}</div>
-                      <div className="ll-sup-rates">
-                        <span>{fmt(q.rate)}/{selectedProduct.unit}</span>
-                        <span style={{color:'var(--text3)'}}>+{fmt(q.freight)} freight</span>
-                        <span style={{fontWeight:700}}>= {fmt(landed)} landed</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Order summary */}
-          {orderTotal > 0 && (
-            <div className="ll-order-summary">
-              <span>Order Value: <strong>{fmtL(orderTotal)}</strong></span>
-              <span>Est. Margin: <strong style={{color:selectedProduct.margin_pct>=18?'var(--green)':'var(--a2)'}}>{fmtPct(selectedProduct.margin_pct)}</strong></span>
-            </div>
-          )}
-
-          <div className="dc-actions" style={{ marginTop: 12 }}>
-            <button className="dc-save-btn" onClick={handleSubmitOrder} disabled={saving || !form.customer_name || !form.product_id || !selectedProduct}>
-              {saving ? 'Creating…' : '✓ Confirm Sales Order'}
-            </button>
-            <AiBtn label="Analyse before confirming"
-              onClick={() => openAI(
-                `Before I confirm this sales order: ${form.quantity} ${selectedProduct.unit} of ${selectedProduct.sku_name} `+
-                `for ${form.customer_name||'unnamed'} (${form.customer_type}), `+
-                `${selectedSupplier?`sourcing from ${selectedSupplier.name} at ₹${selectedSupplier.rate}/${selectedProduct.unit}`:'no supplier selected yet'}. `+
-                `Total value: ${fmtL(orderTotal)}. Margin: ${fmtPct(selectedProduct.margin_pct)}. `+
-                `What should I check before confirming? Any risks or red flags?`
-              )} />
-          </div>
-        </div>
-      )}
 
       {/* Order History */}
       <div className="card" style={{ marginTop: 14 }}>
