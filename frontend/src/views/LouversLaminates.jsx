@@ -537,7 +537,6 @@ function SalesOrdersTab({ data, onRefresh, openAI }) {
         {products.map(p => {
           const quotes = quotations[String(p.product_id)] || [];
           const best   = quotes.find(q => q.is_best);
-          const isSelected = String(form.product_id) === String(p.product_id);
           return (
             <div
               key={p.product_id}
