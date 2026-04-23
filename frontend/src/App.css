@@ -887,6 +887,18 @@ input[type=range] { width: 100%; accent-color: var(--green); margin: 5px 0; curs
    LOUVERS & LAMINATES  —  ll-*  classes
    ══════════════════════════════════════════════════════════════════════════════ */
 
+/* ── New Sales Order primary button ── */
+.ll-new-order-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 20px; border: none; border-radius: 8px; cursor: pointer;
+  font-size: 13px; font-weight: 700;
+  background: var(--accent); color: #fff;
+  box-shadow: 0 2px 10px rgba(22,163,74,.35);
+  transition: all .15s;
+}
+.ll-new-order-btn:hover { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(22,163,74,.45); }
+.ll-new-order-btn:active { transform: translateY(0); }
+
 /* ── Section header ── */
 .ll-section-hdr {
   display: flex; align-items: center; justify-content: space-between;
