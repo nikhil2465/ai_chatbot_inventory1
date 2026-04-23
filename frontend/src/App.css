@@ -887,17 +887,29 @@ input[type=range] { width: 100%; accent-color: var(--green); margin: 5px 0; curs
    LOUVERS & LAMINATES  —  ll-*  classes
    ══════════════════════════════════════════════════════════════════════════════ */
 
-/* ── New Sales Order primary button ── */
-.ll-new-order-btn {
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 9px 20px; border: none; border-radius: 8px; cursor: pointer;
-  font-size: 13px; font-weight: 700;
-  background: var(--accent); color: #fff;
-  box-shadow: 0 2px 10px rgba(22,163,74,.35);
-  transition: all .15s;
+/* ── Create Sales Order action bar ── */
+.ll-create-order-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  background: linear-gradient(135deg, #15803d 0%, #16a34a 60%, #22c55e 100%);
+  border-radius: 12px; padding: 16px 20px; margin-bottom: 20px;
+  box-shadow: 0 4px 16px rgba(22,163,74,.3);
 }
-.ll-new-order-btn:hover { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(22,163,74,.45); }
-.ll-new-order-btn:active { transform: translateY(0); }
+.ll-create-order-bar-left { display: flex; align-items: center; gap: 14px; }
+.ll-create-order-bar-icon {
+  width: 42px; height: 42px; border-radius: 10px;
+  background: rgba(255,255,255,.18); display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.ll-create-order-bar-title { font-size: 15px; font-weight: 800; color: #fff; margin-bottom: 3px; }
+.ll-create-order-bar-sub   { font-size: 11px; color: rgba(255,255,255,.8); }
+.ll-create-order-bar-btn {
+  display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0;
+  padding: 10px 22px; border: 2px solid rgba(255,255,255,.6); border-radius: 8px; cursor: pointer;
+  font-size: 13px; font-weight: 800; color: #fff; background: rgba(255,255,255,.15);
+  backdrop-filter: blur(4px); transition: all .15s; white-space: nowrap;
+}
+.ll-create-order-bar-btn:hover { background: rgba(255,255,255,.28); border-color: #fff; transform: translateY(-1px); }
+.ll-create-order-bar-btn:active { transform: translateY(0); }
 
 /* ── Section header ── */
 .ll-section-hdr {

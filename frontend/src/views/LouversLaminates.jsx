@@ -139,19 +139,32 @@ function SalesOrdersTab({ data, onRefresh, openAI }) {
 
   return (
     <div>
-      {/* ── Create Sales Order button ─────────────────────────────────────── */}
-      <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:14 }}>
+      {/* ── Create Sales Order — prominent action card ──────────────────────── */}
+      <div className="ll-create-order-bar">
+        <div className="ll-create-order-bar-left">
+          <div className="ll-create-order-bar-icon">
+            <svg viewBox="0 0 20 20" fill="none" width="22" height="22">
+              <rect x="2" y="3" width="16" height="14" rx="2.5" stroke="white" strokeWidth="1.6"/>
+              <path d="M10 7v6M7 10h6" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
+            </svg>
+          </div>
+          <div>
+            <div className="ll-create-order-bar-title">Create New Sales Order</div>
+            <div className="ll-create-order-bar-sub">Place a new louvers or laminates order — select product, supplier &amp; customer details</div>
+          </div>
+        </div>
         <button
-          className="ll-new-order-btn"
+          className="ll-create-order-bar-btn"
           onClick={() => {
             setShowForm(true);
             setSelectedProduct(null);
             setActiveQuotes([]);
             setForm(f => ({ ...f, product_id:'', supplier_id:'' }));
+            setTimeout(() => document.getElementById('ll-order-form')?.scrollIntoView({ behavior:'smooth', block:'start' }), 80);
           }}
         >
-          <svg viewBox="0 0 16 16" fill="none" width="14" height="14" style={{flexShrink:0}}>
-            <path d="M8 2v12M2 8h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+          <svg viewBox="0 0 16 16" fill="none" width="14" height="14">
+            <path d="M8 2v12M2 8h12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/>
           </svg>
           New Sales Order
         </button>
@@ -161,7 +174,7 @@ function SalesOrdersTab({ data, onRefresh, openAI }) {
       <div className="ll-section-hdr">
         <div>
           <div className="ctit">Product Catalogue</div>
-          <div className="csub">7 products · Louvers, HPL, Compact, Acrylic — click a card or use New Sales Order above</div>
+          <div className="csub">7 products · click a card to pre-select, or use the button above to start blank</div>
         </div>
         <AiBtn sm label="Catalogue insights"
           onClick={() => openAI(
@@ -214,7 +227,7 @@ function SalesOrdersTab({ data, onRefresh, openAI }) {
 
       {/* Create Order Form */}
       {showForm && (
-        <div className="card" style={{ marginTop: 14 }}>
+        <div id="ll-order-form" className="card" style={{ marginTop: 14, borderTop: '3px solid var(--accent)' }}>
           <div className="ch">
             <div>
               <div className="ctit">
